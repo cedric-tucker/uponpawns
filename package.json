@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@lichess-org/chessground": "^10.1.1",
-    "chessops": "^0.15.1"
+    "chessops": "^0.15.1",
+    "stockfish": "^18.0.8"
   }
 }
