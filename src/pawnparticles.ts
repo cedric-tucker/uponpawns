@@ -3,36 +3,29 @@
 // demo: a 2D profile curve (radius vs. height) revolved around the
 // vertical axis, then rotated and projected each frame.
 //
-// The pointer knocks nearby particles into a genuine free flight: while a
-// particle carries real speed, its pull back toward its rotating seat is
-// almost entirely switched off, and it instead bounces off the canvas
-// edges like a pong ball, losing a little energy each bounce. Only once
-// it's slowed back down does the spring take back over and reel it in.
-interface Particle {
+// The pawn is one rigid, cohesive shape: every particle is always drawn
+// exactly at its computed position, with no physics of its own. What has
+// physics is a single shared (center, velocity) for the whole shape --
+// the pointer knocks *that*, and it bounces off the canvas edges like a
+// pong ball, losing a little energy each bounce, until it settles back
+// toward the middle.
+interface Seed {
     t: number; // normalised height, fixed for this particle's lifetime
     phi: number; // angular seat around the vertical axis, fixed
-    x: number; // current on-screen position
-    y: number;
-    vx: number;
-    vy: number;
-}
-
-interface Seed {
-    t: number;
-    phi: number;
 }
 
 const PARTICLE_COUNT = 900; // backface-culled, so only roughly half are ever visible at once
 const DOT_RADIUS_MIN = 0.6;
 const DOT_RADIUS_MAX = 1.3;
 const ROTATION_SPEED = 0.006; // radians/frame at ~60fps -- one turn every ~17s
-const SPRING = 0.06;
-const FRICTION = 0.95; // light drag -- particles should actually travel and bounce, not just fizzle
-const KICK_RADIUS = 46;
-const KICK_STRENGTH = 15; // a real knock
-const MAX_SPEED = 16; // clamp so sustained cursor proximity can't accelerate a particle without bound
-const CALM_SPEED = 5; // below this, the spring progressively re-engages; above it, the particle is free-flying
-const WALL_RESTITUTION = 0.86; // energy kept per bounce off the container edge
+
+const HIT_RADIUS_FACTOR = 0.46; // x min(width,height) -- how close counts as "touching" the pawn
+const KICK_STRENGTH = 2.4;
+const MAX_CENTER_SPEED = 9;
+const FRICTION = 0.985; // light drag -- the shape should travel and bounce, not fizzle in place
+const WALL_RESTITUTION = 0.82; // energy kept per bounce off the container edge
+const CALM_SPEED = 0.6; // below this, the shape eases back toward centre
+const REST_SPRING = 0.01;
 
 export interface ParticleField {
     pause(): void;
@@ -59,6 +52,7 @@ const PROFILE: [number, number][] = [
 const HEAD_EQUATOR_T = 0.80;
 const HEAD_R = 0.160;
 const PROFILE_MAX_R = 0.30;
+const PAWN_HALF_HEIGHT_FACTOR = 0.39; // half of the 0.78 height scale below
 
 function lerpCos(a: number, b: number, mu: number): number {
     const eased = (1 - Math.cos(mu * Math.PI)) / 2;
@@ -102,8 +96,12 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
     let width = 0;
     let height = 0;
     let seeds: Seed[] = [];
-    let particles: Particle[] = [];
     let rotation = 0;
+    // The whole shape's offset from the canvas centre, and its velocity --
+    // the only thing with physics. Every particle's position is purely a
+    // function of (rotation, center); there's no per-particle state.
+    const center = { x: 0, y: 0 };
+    const centerV = { x: 0, y: 0 };
     let pointer: { x: number; y: number } | null = null;
     let raf = 0;
 
@@ -113,8 +111,8 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
         const theta = phi + rotation;
         const x3 = r * Math.cos(theta);
         const z3 = r * Math.sin(theta);
-        const y3 = (0.5 - t) * scale * 0.78; // taller than wide, vertically centered
-        return { x: width / 2 + x3, y: height / 2 + y3, z: z3 };
+        const y3 = (0.5 - t) * scale * 0.78; // taller than wide
+        return { x: width / 2 + center.x + x3, y: height / 2 + center.y + y3, z: z3 };
     }
 
     function ensureSized() {
@@ -130,13 +128,7 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
             canvas.height = height * dpr;
             ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
         }
-        if (seeds.length === 0) {
-            seeds = seedParticles(PARTICLE_COUNT);
-            particles = seeds.map(({ t, phi }) => {
-                const p = project(t, phi);
-                return { t, phi, x: p.x, y: p.y, vx: 0, vy: 0 };
-            });
-        }
+        if (seeds.length === 0) seeds = seedParticles(PARTICLE_COUNT);
     }
 
     function onPointerMove(e: PointerEvent) {
@@ -173,80 +165,80 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
         return z >= -Math.min(width, height) * 0.02;
     }
 
-    // A single still frame for prefers-reduced-motion: particles drawn
-    // directly at their seat, no spring, no rotation, no loop.
-    function drawStatic() {
+    function drawShape() {
         if (!ctx) return;
         ctx.clearRect(0, 0, width, height);
         ctx.fillStyle = dotColor;
-        const projected = particles.map((p) => project(p.t, p.phi)).filter((d) => isFacing(d.z));
-        projected.sort((a, b) => a.z - b.z);
+        const projected = seeds.map(({ t, phi }) => project(t, phi)).filter((d) => isFacing(d.z));
+        projected.sort((a, b) => a.z - b.z); // back-to-front
         for (const d of projected) drawDot(d.x, d.y, d.z);
         ctx.globalAlpha = 1;
     }
 
-    function step() {
-        rotation += ROTATION_SPEED;
-        if (!ctx) return;
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = dotColor;
-
-        // Physics runs for every particle regardless of facing, so one
-        // rotating back into view is already tracking its target smoothly
-        // instead of jump-cutting in from a frozen position.
-        const targets = particles.map((p) => ({ p, target: project(p.t, p.phi) }));
-
-        for (const { p, target } of targets) {
-            const speed = Math.hypot(p.vx, p.vy);
-            // 1 = calm (spring fully engaged), 0 = still flying from a knock.
-            const calm = Math.max(0, Math.min(1, 1 - speed / CALM_SPEED));
-            let ax = (target.x - p.x) * SPRING * calm;
-            let ay = (target.y - p.y) * SPRING * calm;
-            if (pointer) {
-                const dx = p.x - pointer.x;
-                const dy = p.y - pointer.y;
-                const dist = Math.hypot(dx, dy) || 1;
-                if (dist < KICK_RADIUS) {
-                    const force = (1 - dist / KICK_RADIUS) * KICK_STRENGTH;
-                    ax += (dx / dist) * force;
-                    ay += (dy / dist) * force;
-                }
-            }
-            p.vx = (p.vx + ax) * FRICTION;
-            p.vy = (p.vy + ay) * FRICTION;
-
-            const newSpeed = Math.hypot(p.vx, p.vy);
-            if (newSpeed > MAX_SPEED) {
-                p.vx = (p.vx / newSpeed) * MAX_SPEED;
-                p.vy = (p.vy / newSpeed) * MAX_SPEED;
-            }
-
-            p.x += p.vx;
-            p.y += p.vy;
-
-            // Bounce off the container edges like a pong ball, losing a
-            // little speed each time, rather than escaping the canvas.
-            if (p.x < 0) {
-                p.x = 0;
-                p.vx = -p.vx * WALL_RESTITUTION;
-            } else if (p.x > width) {
-                p.x = width;
-                p.vx = -p.vx * WALL_RESTITUTION;
-            }
-            if (p.y < 0) {
-                p.y = 0;
-                p.vy = -p.vy * WALL_RESTITUTION;
-            } else if (p.y > height) {
-                p.y = height;
-                p.vy = -p.vy * WALL_RESTITUTION;
+    // Knocks and settles the *whole shape* -- not individual particles.
+    function stepCenter() {
+        if (pointer) {
+            const absX = width / 2 + center.x;
+            const absY = height / 2 + center.y;
+            const dx = absX - pointer.x;
+            const dy = absY - pointer.y;
+            const dist = Math.hypot(dx, dy) || 1;
+            const hitRadius = Math.min(width, height) * HIT_RADIUS_FACTOR;
+            if (dist < hitRadius) {
+                const force = (1 - dist / hitRadius) * KICK_STRENGTH;
+                centerV.x += (dx / dist) * force;
+                centerV.y += (dy / dist) * force;
             }
         }
 
-        const visible = targets.filter(({ target }) => isFacing(target.z));
-        visible.sort((a, b) => a.target.z - b.target.z); // back-to-front
-        for (const { p, target } of visible) drawDot(p.x, p.y, target.z);
-        ctx.globalAlpha = 1;
+        // Once it's basically stopped bouncing, ease it back toward centre
+        // rather than leaving it resting wherever it happened to stop.
+        const speed = Math.hypot(centerV.x, centerV.y);
+        if (speed < CALM_SPEED) {
+            centerV.x += -center.x * REST_SPRING;
+            centerV.y += -center.y * REST_SPRING;
+        }
 
+        centerV.x *= FRICTION;
+        centerV.y *= FRICTION;
+        const sp = Math.hypot(centerV.x, centerV.y);
+        if (sp > MAX_CENTER_SPEED) {
+            centerV.x = (centerV.x / sp) * MAX_CENTER_SPEED;
+            centerV.y = (centerV.y / sp) * MAX_CENTER_SPEED;
+        }
+
+        center.x += centerV.x;
+        center.y += centerV.y;
+
+        // Bounce off the container edges once the shape's own extent (not
+        // just its centre point) reaches the wall.
+        const scale = Math.min(width, height);
+        const halfW = PROFILE_MAX_R * scale;
+        const halfH = scale * PAWN_HALF_HEIGHT_FACTOR;
+        const minX = halfW - width / 2;
+        const maxX = width / 2 - halfW;
+        const minY = halfH - height / 2;
+        const maxY = height / 2 - halfH;
+        if (center.x < minX) {
+            center.x = minX;
+            centerV.x = -centerV.x * WALL_RESTITUTION;
+        } else if (center.x > maxX) {
+            center.x = maxX;
+            centerV.x = -centerV.x * WALL_RESTITUTION;
+        }
+        if (center.y < minY) {
+            center.y = minY;
+            centerV.y = -centerV.y * WALL_RESTITUTION;
+        } else if (center.y > maxY) {
+            center.y = maxY;
+            centerV.y = -centerV.y * WALL_RESTITUTION;
+        }
+    }
+
+    function step() {
+        rotation += ROTATION_SPEED;
+        stepCenter();
+        drawShape();
         raf = requestAnimationFrame(step);
     }
 
@@ -254,7 +246,7 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
         ensureSized();
         if (raf) return;
         if (reducedMotion) {
-            drawStatic();
+            drawShape(); // single static frame -- no rotation, no bounce, no loop
         } else {
             raf = requestAnimationFrame(step);
         }
