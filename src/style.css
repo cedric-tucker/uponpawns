@@ -3,12 +3,45 @@ body {
   min-height: 100dvh;
   font-family: system-ui, sans-serif;
   background-color: black;
+  color: aliceblue;
   display: grid;
   place-items: center;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 #board {
   width: min(90vw, 70vh);
   aspect-ratio: 1;
   background-color: aliceblue;
+}
+
+#panel {
+  width: min(90vw, 70vh);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+#reset {
+  align-self: flex-start;
+  font: inherit;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+#status {
+  font-weight: bold;
+  min-height: 1.2em;
+}
+
+#history {
+  font-family: ui-monospace, monospace;
+  line-height: 1.4;
+  word-break: break-word;
 }
