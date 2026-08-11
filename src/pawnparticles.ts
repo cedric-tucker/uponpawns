@@ -1,97 +1,92 @@
-// A field of small particles resting in the shape of a pawn. The pointer
-// pushes nearby particles away; a spring pulls each one back toward its
-// resting position once released. Runs only while visible -- pause()/
-// resume() are wired to Home screen visibility by the caller, since an
-// animation loop behind a hidden screen is pure waste.
+// A field of small particles arranged as a surface of revolution shaped
+// like a pawn -- the same technique behind the classic "spinning donut"
+// demo: a 2D profile curve (radius vs. height) revolved around the
+// vertical axis, then rotated and projected each frame. The pointer gives
+// nearby particles an outward kick; an underdamped spring pulls them back
+// toward their seat on the (still-spinning) surface, so they overshoot and
+// wobble back rather than sliding smoothly home.
 interface Particle {
-    homeX: number;
-    homeY: number;
-    x: number;
+    t: number; // normalised height, fixed for this particle's lifetime
+    phi: number; // angular seat around the vertical axis, fixed
+    x: number; // current on-screen position
     y: number;
     vx: number;
     vy: number;
 }
 
-const REPEL_RADIUS = 46;
-const REPEL_STRENGTH = 2600;
-const SPRING = 0.035;
-const FRICTION = 0.88;
-const DOT_RADIUS = 1.6;
-const MAX_PARTICLES = 340;
-const SAMPLE_STEP = 4;
+interface Seed {
+    t: number;
+    phi: number;
+}
+
+const PARTICLE_COUNT = 460; // backface-culled, so only roughly half are ever visible at once
+const DOT_RADIUS_MIN = 1.0;
+const DOT_RADIUS_MAX = 2.1;
+const ROTATION_SPEED = 0.006; // radians/frame at ~60fps -- one turn every ~17s
+const SPRING = 0.05;
+const FRICTION = 0.90; // lower = more overshoot/bounce, higher = more damped
+const KICK_RADIUS = 42;
+const KICK_STRENGTH = 3.2;
 
 export interface ParticleField {
     pause(): void;
     resume(): void;
 }
 
-// Drawn from primitives rather than a font glyph -- chess symbol coverage
-// varies enough across platforms that betting the whole effect on a font
-// having U+2659 felt too fragile. Segmented (base / body / neck / collar /
-// head) with real gaps in radius between them so it still reads as a pawn
-// once blurred out into a sparse dot field.
-function drawPawnSilhouette(ctx: CanvasRenderingContext2D, width: number, height: number): void {
-    const cx = width / 2;
-    ctx.fillStyle = '#fff';
+// ---- Pawn profile: radius as a function of normalised height (0 = base
+// underside, 1 = crown of the head). Named, physically-motivated segments
+// rather than an arbitrary blob -- and real circular-arc math for the
+// head, so it actually reads as a ball once revolved. ----
+const PROFILE: [number, number][] = [
+    [0.00, 0.00],
+    [0.02, 0.30],
+    [0.07, 0.28],
+    [0.11, 0.19],
+    [0.30, 0.145],
+    [0.44, 0.135],
+    [0.47, 0.205],
+    [0.51, 0.115],
+    [0.58, 0.078],
+    [0.68, 0.115],
+    [0.80, 0.160],
+];
+const HEAD_EQUATOR_T = 0.80;
+const HEAD_R = 0.160;
+const PROFILE_MAX_R = 0.30;
 
-    // Base
-    ctx.beginPath();
-    ctx.ellipse(cx, height * 0.90, width * 0.32, height * 0.055, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Body: a rounded cone from the base up to the neck
-    ctx.beginPath();
-    ctx.moveTo(cx - width * 0.24, height * 0.86);
-    ctx.quadraticCurveTo(cx - width * 0.26, height * 0.62, cx - width * 0.075, height * 0.52);
-    ctx.lineTo(cx + width * 0.075, height * 0.52);
-    ctx.quadraticCurveTo(cx + width * 0.26, height * 0.62, cx + width * 0.24, height * 0.86);
-    ctx.closePath();
-    ctx.fill();
-
-    // Neck -- deliberately thin, so the collar above reads as an overhang
-    ctx.beginPath();
-    ctx.moveTo(cx - width * 0.06, height * 0.52);
-    ctx.lineTo(cx - width * 0.055, height * 0.42);
-    ctx.lineTo(cx + width * 0.055, height * 0.42);
-    ctx.lineTo(cx + width * 0.06, height * 0.52);
-    ctx.closePath();
-    ctx.fill();
-
-    // Collar
-    ctx.beginPath();
-    ctx.ellipse(cx, height * 0.41, width * 0.115, height * 0.028, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Head
-    ctx.beginPath();
-    ctx.arc(cx, height * 0.24, width * 0.15, 0, Math.PI * 2);
-    ctx.fill();
+function lerpCos(a: number, b: number, mu: number): number {
+    const eased = (1 - Math.cos(mu * Math.PI)) / 2;
+    return a + (b - a) * eased;
 }
 
-function samplePoints(width: number, height: number): { x: number; y: number }[] {
-    const off = document.createElement('canvas');
-    off.width = width;
-    off.height = height;
-    const ctx = off.getContext('2d');
-    if (!ctx) return [];
-    drawPawnSilhouette(ctx, width, height);
+function pawnRadius(t: number): number {
+    if (t >= HEAD_EQUATOR_T) {
+        const local = (t - HEAD_EQUATOR_T) / (1 - HEAD_EQUATOR_T);
+        return HEAD_R * Math.cos(local * (Math.PI / 2));
+    }
+    for (let i = 0; i < PROFILE.length - 1; i++) {
+        const [t0, r0] = PROFILE[i];
+        const [t1, r1] = PROFILE[i + 1];
+        if (t >= t0 && t <= t1) return lerpCos(r0, r1, (t - t0) / (t1 - t0));
+    }
+    return PROFILE[PROFILE.length - 1][1];
+}
 
-    const { data } = ctx.getImageData(0, 0, width, height);
-    const all: { x: number; y: number }[] = [];
-    for (let y = 0; y < height; y += SAMPLE_STEP) {
-        for (let x = 0; x < width; x += SAMPLE_STEP) {
-            if (data[(y * width + x) * 4 + 3] > 128) all.push({ x, y });
+// Rejection sampling with acceptance probability proportional to radius
+// approximates uniform density per unit of actual surface (circumference
+// scales with radius), so the wide base and head don't come out sparser
+// than the thin neck just because they got the same point count.
+function seedParticles(count: number): Seed[] {
+    const seeds: Seed[] = [];
+    let guard = 0;
+    while (seeds.length < count && guard < count * 80) {
+        guard++;
+        const t = Math.random();
+        if (Math.random() * PROFILE_MAX_R < pawnRadius(t)) {
+            seeds.push({ t, phi: Math.random() * Math.PI * 2 });
         }
     }
-    if (all.length <= MAX_PARTICLES) return all;
-    // Shuffle before truncating: the grid above is filled row-major, so
-    // taking a fixed stride through it unshuffled picks a diagonal,
-    // wavy-looking subset instead of an even scatter across the shape.
-    for (let i = all.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [all[i], all[j]] = [all[j], all[i]];
-    }
-    return all.slice(0, MAX_PARTICLES);
+    return seeds;
 }
 
 export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string): ParticleField {
@@ -100,23 +95,42 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
 
     let width = 0;
     let height = 0;
+    let seeds: Seed[] = [];
     let particles: Particle[] = [];
+    let rotation = 0;
     let pointer: { x: number; y: number } | null = null;
     let raf = 0;
+
+    function project(t: number, phi: number): { x: number; y: number; z: number } {
+        const scale = Math.min(width, height);
+        const r = pawnRadius(t) * scale;
+        const theta = phi + rotation;
+        const x3 = r * Math.cos(theta);
+        const z3 = r * Math.sin(theta);
+        const y3 = (0.5 - t) * scale * 0.78; // taller than wide, vertically centered
+        return { x: width / 2 + x3, y: height / 2 + y3, z: z3 };
+    }
 
     function ensureSized() {
         const rect = canvas.getBoundingClientRect();
         const w = Math.round(rect.width);
         const h = Math.round(rect.height);
-        if (w === 0 || h === 0) return; // not visible yet -- nothing to size against
-        if (w === width && h === height && particles.length) return;
-        width = w;
-        height = h;
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
-        ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
-        particles = samplePoints(width, height).map((p) => ({ homeX: p.x, homeY: p.y, x: p.x, y: p.y, vx: 0, vy: 0 }));
+        if (w === 0 || h === 0) return; // not visible yet
+        if (w !== width || h !== height) {
+            width = w;
+            height = h;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+        if (seeds.length === 0) {
+            seeds = seedParticles(PARTICLE_COUNT);
+            particles = seeds.map(({ t, phi }) => {
+                const p = project(t, phi);
+                return { t, phi, x: p.x, y: p.y, vx: 0, vy: 0 };
+            });
+        }
     }
 
     function onPointerMove(e: PointerEvent) {
@@ -129,27 +143,62 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerleave', onPointerLeave);
 
-    function drawFrame() {
+    function depthStyle(z: number): { alpha: number; radius: number } {
+        const norm = Math.max(-1, Math.min(1, z / (Math.min(width, height) * 0.32)));
+        const t = (norm + 1) / 2;
+        return { alpha: 0.35 + t * 0.65, radius: DOT_RADIUS_MIN + t * (DOT_RADIUS_MAX - DOT_RADIUS_MIN) };
+    }
+
+    function drawDot(x: number, y: number, z: number) {
+        if (!ctx) return;
+        const { alpha, radius } = depthStyle(z);
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // A solid pawn only ever shows the surface facing the viewer -- without
+    // this, points from all the way around the revolution overlap in 2D
+    // and it reads as a fuzzy blob rather than a rotating solid. A small
+    // negative allowance rather than a hard z >= 0 keeps a sliver of the
+    // rim visible right at the silhouette edge instead of a clean cut.
+    function isFacing(z: number): boolean {
+        return z >= -Math.min(width, height) * 0.02;
+    }
+
+    // A single still frame for prefers-reduced-motion: particles drawn
+    // directly at their seat, no spring, no rotation, no loop.
+    function drawStatic() {
         if (!ctx) return;
         ctx.clearRect(0, 0, width, height);
         ctx.fillStyle = dotColor;
-        for (const p of particles) {
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, DOT_RADIUS, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        const projected = particles.map((p) => project(p.t, p.phi)).filter((d) => isFacing(d.z));
+        projected.sort((a, b) => a.z - b.z);
+        for (const d of projected) drawDot(d.x, d.y, d.z);
+        ctx.globalAlpha = 1;
     }
 
     function step() {
-        for (const p of particles) {
-            let ax = (p.homeX - p.x) * SPRING;
-            let ay = (p.homeY - p.y) * SPRING;
+        rotation += ROTATION_SPEED;
+        if (!ctx) return;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = dotColor;
+
+        // Physics runs for every particle regardless of facing, so one
+        // rotating back into view is already tracking its target smoothly
+        // instead of jump-cutting in from a frozen position.
+        const targets = particles.map((p) => ({ p, target: project(p.t, p.phi) }));
+
+        for (const { p, target } of targets) {
+            let ax = (target.x - p.x) * SPRING;
+            let ay = (target.y - p.y) * SPRING;
             if (pointer) {
                 const dx = p.x - pointer.x;
                 const dy = p.y - pointer.y;
                 const dist = Math.hypot(dx, dy) || 1;
-                if (dist < REPEL_RADIUS) {
-                    const force = (1 - dist / REPEL_RADIUS) * (REPEL_STRENGTH / (dist * dist + 40));
+                if (dist < KICK_RADIUS) {
+                    const force = (1 - dist / KICK_RADIUS) * KICK_STRENGTH;
                     ax += (dx / dist) * force;
                     ay += (dy / dist) * force;
                 }
@@ -159,7 +208,12 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
             p.x += p.vx;
             p.y += p.vy;
         }
-        drawFrame();
+
+        const visible = targets.filter(({ target }) => isFacing(target.z));
+        visible.sort((a, b) => a.target.z - b.target.z); // back-to-front
+        for (const { p, target } of visible) drawDot(p.x, p.y, target.z);
+        ctx.globalAlpha = 1;
+
         raf = requestAnimationFrame(step);
     }
 
@@ -167,7 +221,7 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
         ensureSized();
         if (raf) return;
         if (reducedMotion) {
-            drawFrame();
+            drawStatic();
         } else {
             raf = requestAnimationFrame(step);
         }
