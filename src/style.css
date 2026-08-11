@@ -524,6 +524,40 @@ cg-board square.check {
   min-height: 1.1em;
 }
 
+.card-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.card-row:last-child { border-bottom: none; }
+
+.card-row button {
+  background: none;
+  color: var(--bad);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  flex: none;
+}
+
+.card-row button:hover { border-color: var(--bad); }
+
 /* ==========================================================================
    Review screen
    ========================================================================== */
@@ -559,6 +593,11 @@ cg-board square.check {
 }
 
 #review-controls button:hover { border-color: var(--muted); }
+
+#remove-card-btn { color: var(--bad); margin-left: auto; }
+#remove-card-btn:hover { border-color: var(--bad); }
+#remove-card-btn:disabled { opacity: 0.4; cursor: default; }
+#remove-card-btn:disabled:hover { border-color: var(--line); }
 
 @media (min-width: 720px) {
   #screen-review.active {

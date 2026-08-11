@@ -17,6 +17,7 @@ export interface Store {
     // normalised FEN.
     addCard(card: Card): Promise<'inserted' | 'duplicate'>;
     updateCard(card: Card): Promise<void>;
+    deleteCard(id: string): Promise<void>;
     getAllCards(): Promise<Card[]>;
     getDueCards(now: Date): Promise<Card[]>;
     addGame(game: SourceGame): Promise<void>;
@@ -87,6 +88,11 @@ export async function openStore(): Promise<Store> {
         await reqToPromise(tx.objectStore(CARDS_STORE).put(card));
     }
 
+    async function deleteCard(id: string): Promise<void> {
+        const tx = db.transaction(CARDS_STORE, 'readwrite');
+        await reqToPromise(tx.objectStore(CARDS_STORE).delete(id));
+    }
+
     async function getAllCards(): Promise<Card[]> {
         const tx = db.transaction(CARDS_STORE, 'readonly');
         return reqToPromise(tx.objectStore(CARDS_STORE).getAll());
@@ -130,5 +136,5 @@ export async function openStore(): Promise<Store> {
         return { cardsAdded, cardsSkipped };
     }
 
-    return { addCard, updateCard, getAllCards, getDueCards, addGame, getGame, exportAll, importAll };
+    return { addCard, updateCard, deleteCard, getAllCards, getDueCards, addGame, getGame, exportAll, importAll };
 }

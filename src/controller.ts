@@ -97,6 +97,8 @@ export async function startApp(): Promise<void> {
         exportBtn: el<HTMLButtonElement>('export-btn'),
         importFile: el<HTMLInputElement>('import-file'),
         collectionResult: el('collection-result'),
+        cardListCount: el('card-list-count'),
+        cardList: el('card-list'),
 
         reviewBoardWrap: el('review-board-wrap'),
         reviewResize: el('review-resize'),
@@ -106,6 +108,7 @@ export async function startApp(): Promise<void> {
         reviewHistory: el('review-history'),
         showCorrectBtn: el<HTMLButtonElement>('show-correct-btn'),
         nextCardBtn: el<HTMLButtonElement>('next-card-btn'),
+        removeCardBtn: el<HTMLButtonElement>('remove-card-btn'),
     };
 
     const engine = await startEngine();
@@ -174,6 +177,42 @@ export async function startApp(): Promise<void> {
         dom.dueCount.textContent = due.length ? ` (${due.length})` : '';
     }
     void refreshDueCount();
+
+    // A way to take a card out of circulation without waiting for it to
+    // come due -- browse the whole collection and remove anything you no
+    // longer want drilled.
+    async function refreshCardList() {
+        const cards = await store.getAllCards();
+        cards.sort((a, b) => a.fsrs.due.getTime() - b.fsrs.due.getTime());
+        dom.cardListCount.textContent = cards.length ? `${cards.length} card(s) in your collection` : 'No cards yet.';
+        dom.cardList.innerHTML = '';
+        for (const card of cards) {
+            const row = document.createElement('div');
+            row.className = 'card-row';
+
+            const info = document.createElement('span');
+            info.textContent = card.moveNumber
+                ? `${card.sideToMove} to move · move ${card.moveNumber} · due ${card.fsrs.due.toLocaleDateString()}`
+                : `${card.sideToMove} to move · manual · due ${card.fsrs.due.toLocaleDateString()}`;
+            row.appendChild(info);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.textContent = 'Remove';
+            removeBtn.addEventListener('click', () => void removeCard(card.id));
+            row.appendChild(removeBtn);
+
+            dom.cardList.appendChild(row);
+        }
+    }
+    void refreshCardList();
+
+    async function removeCard(id: string): Promise<void> {
+        if (!confirm('Remove this card from your collection? This can\'t be undone.')) return;
+        await store.deleteCard(id);
+        void refreshDueCount();
+        void refreshCardList();
+    }
 
     // ---- Play screen: free play against the engine ---------------------
     let playGame: Game = createGame();
@@ -286,6 +325,7 @@ export async function startApp(): Promise<void> {
                 (result.cardsSkipped ? `, ${result.cardsSkipped} duplicate(s) skipped` : '') +
                 '.';
             void refreshDueCount();
+            void refreshCardList();
         } catch (err) {
             dom.importResult.textContent = `Import failed: ${(err as Error).message}`;
         } finally {
@@ -308,6 +348,7 @@ export async function startApp(): Promise<void> {
             dom.manualResult.textContent = result === 'inserted' ? 'Card added.' : 'That position is already in your collection.';
             if (result === 'inserted') dom.manualFen.value = '';
             void refreshDueCount();
+            void refreshCardList();
         } catch (err) {
             dom.manualResult.textContent = `Couldn't add that: ${(err as Error).message}`;
         } finally {
@@ -334,6 +375,7 @@ export async function startApp(): Promise<void> {
             const result = await store.importAll(text);
             dom.collectionResult.textContent = `Imported ${result.cardsAdded} card(s), skipped ${result.cardsSkipped} duplicate(s).`;
             void refreshDueCount();
+            void refreshCardList();
         } catch (err) {
             dom.collectionResult.textContent = `Import failed: ${(err as Error).message}`;
         } finally {
@@ -362,6 +404,18 @@ export async function startApp(): Promise<void> {
     });
 
     dom.nextCardBtn.addEventListener('click', () => void loadNextCard());
+    dom.removeCardBtn.addEventListener('click', async () => {
+        const card = currentCard;
+        // Disabled while reviewLocked (see refreshReviewBoard) so this can't
+        // race a grading call still in flight -- scoreAt()'s cache-growing
+        // store.updateCard() would otherwise silently resurrect a card
+        // deleted out from under it.
+        if (!card || reviewLocked) return;
+        if (!confirm('Remove this card from your collection? This can\'t be undone.')) return;
+        await store.deleteCard(card.id);
+        void refreshCardList();
+        await loadNextCard();
+    });
     dom.showCorrectBtn.addEventListener('click', () => {
         if (pendingCorrectUci) {
             reviewBoard.showHint(pendingCorrectUci.slice(0, 2) as Key, pendingCorrectUci.slice(2, 4) as Key);
@@ -389,6 +443,7 @@ export async function startApp(): Promise<void> {
             dom.reviewInfo.textContent = due.length === 0 ? 'No cards due. Nothing to review right now.' : '';
             reviewBoard.render({ fen: makeFen(Chess.default().toSetup()), turn: 'white', dests: new Map(), interactive: false, orientation: 'white' });
             dom.reviewHistory.innerHTML = '';
+            dom.removeCardBtn.disabled = true;
             return;
         }
         reviewGame = createGame(card.fen);
@@ -410,6 +465,7 @@ export async function startApp(): Promise<void> {
             interactive: live && !reviewLocked,
             orientation: currentCard.sideToMove,
         });
+        dom.removeCardBtn.disabled = reviewLocked;
         reviewMoveList.render(
             reviewGame.history(),
             reviewViewPly === 0 ? null : reviewViewPly,
@@ -481,12 +537,38 @@ export async function startApp(): Promise<void> {
         }
 
         stepIndex++;
+        await continueAfterPly();
+    }
+
+    // You only ever play one side. If the line has more to go and it's now
+    // the *other* side's turn, that move is auto-played from the card's own
+    // correctLine rather than waited on -- there's no free engine opponent,
+    // but there's also no reason to make the reviewer stand in for one.
+    async function continueAfterPly() {
+        const card = currentCard;
+        if (!card || !reviewGame) return;
+
         if (stepIndex >= card.correctLine.length || reviewGame.isEnd()) {
             await finishAttempt();
             return;
         }
 
-        // Attempt continues -- unlock for the next ply.
+        if (reviewGame.turn() !== card.sideToMove) {
+            await new Promise((r) => setTimeout(r, 350)); // let the reveal register as a move, not a jump cut
+            const uci = card.correctLine[stepIndex];
+            if (uci) {
+                reviewGame.playUci(uci);
+                reviewViewPly = reviewGame.plyCount();
+                stepIndex++;
+            }
+            refreshReviewBoard();
+            if (stepIndex >= card.correctLine.length || reviewGame.isEnd()) {
+                await finishAttempt();
+                return;
+            }
+        }
+
+        // Attempt continues -- unlock for the reviewer's next ply.
         reviewLocked = false;
         refreshReviewBoard();
     }
