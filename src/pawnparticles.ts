@@ -1,10 +1,13 @@
 // A field of small particles arranged as a surface of revolution shaped
 // like a pawn -- the same technique behind the classic "spinning donut"
 // demo: a 2D profile curve (radius vs. height) revolved around the
-// vertical axis, then rotated and projected each frame. The pointer gives
-// nearby particles an outward kick; an underdamped spring pulls them back
-// toward their seat on the (still-spinning) surface, so they overshoot and
-// wobble back rather than sliding smoothly home.
+// vertical axis, then rotated and projected each frame.
+//
+// The pointer knocks nearby particles into a genuine free flight: while a
+// particle carries real speed, its pull back toward its rotating seat is
+// almost entirely switched off, and it instead bounces off the canvas
+// edges like a pong ball, losing a little energy each bounce. Only once
+// it's slowed back down does the spring take back over and reel it in.
 interface Particle {
     t: number; // normalised height, fixed for this particle's lifetime
     phi: number; // angular seat around the vertical axis, fixed
@@ -19,14 +22,17 @@ interface Seed {
     phi: number;
 }
 
-const PARTICLE_COUNT = 460; // backface-culled, so only roughly half are ever visible at once
-const DOT_RADIUS_MIN = 1.0;
-const DOT_RADIUS_MAX = 2.1;
+const PARTICLE_COUNT = 900; // backface-culled, so only roughly half are ever visible at once
+const DOT_RADIUS_MIN = 0.6;
+const DOT_RADIUS_MAX = 1.3;
 const ROTATION_SPEED = 0.006; // radians/frame at ~60fps -- one turn every ~17s
-const SPRING = 0.05;
-const FRICTION = 0.90; // lower = more overshoot/bounce, higher = more damped
-const KICK_RADIUS = 42;
-const KICK_STRENGTH = 3.2;
+const SPRING = 0.06;
+const FRICTION = 0.95; // light drag -- particles should actually travel and bounce, not just fizzle
+const KICK_RADIUS = 46;
+const KICK_STRENGTH = 15; // a real knock
+const MAX_SPEED = 16; // clamp so sustained cursor proximity can't accelerate a particle without bound
+const CALM_SPEED = 5; // below this, the spring progressively re-engages; above it, the particle is free-flying
+const WALL_RESTITUTION = 0.86; // energy kept per bounce off the container edge
 
 export interface ParticleField {
     pause(): void;
@@ -191,8 +197,11 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
         const targets = particles.map((p) => ({ p, target: project(p.t, p.phi) }));
 
         for (const { p, target } of targets) {
-            let ax = (target.x - p.x) * SPRING;
-            let ay = (target.y - p.y) * SPRING;
+            const speed = Math.hypot(p.vx, p.vy);
+            // 1 = calm (spring fully engaged), 0 = still flying from a knock.
+            const calm = Math.max(0, Math.min(1, 1 - speed / CALM_SPEED));
+            let ax = (target.x - p.x) * SPRING * calm;
+            let ay = (target.y - p.y) * SPRING * calm;
             if (pointer) {
                 const dx = p.x - pointer.x;
                 const dy = p.y - pointer.y;
@@ -205,8 +214,32 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
             }
             p.vx = (p.vx + ax) * FRICTION;
             p.vy = (p.vy + ay) * FRICTION;
+
+            const newSpeed = Math.hypot(p.vx, p.vy);
+            if (newSpeed > MAX_SPEED) {
+                p.vx = (p.vx / newSpeed) * MAX_SPEED;
+                p.vy = (p.vy / newSpeed) * MAX_SPEED;
+            }
+
             p.x += p.vx;
             p.y += p.vy;
+
+            // Bounce off the container edges like a pong ball, losing a
+            // little speed each time, rather than escaping the canvas.
+            if (p.x < 0) {
+                p.x = 0;
+                p.vx = -p.vx * WALL_RESTITUTION;
+            } else if (p.x > width) {
+                p.x = width;
+                p.vx = -p.vx * WALL_RESTITUTION;
+            }
+            if (p.y < 0) {
+                p.y = 0;
+                p.vy = -p.vy * WALL_RESTITUTION;
+            } else if (p.y > height) {
+                p.y = height;
+                p.vy = -p.vy * WALL_RESTITUTION;
+            }
         }
 
         const visible = targets.filter(({ target }) => isFacing(target.z));
