@@ -7,17 +7,18 @@ import { chessgroundDests } from 'chessops/compat';
 import { makeFen, parseFen } from 'chessops/fen';
 import { makeSan } from 'chessops/san';
 import { parseSquare, parseUci } from 'chessops/util';
+import type { Color } from 'chessops/types';
 import type { Key } from '@lichess-org/chessground/types';
 
 import { createBoard } from './board';
 import type { BoardView } from './board';
-import { createGame, normalizeFen } from './game';
+import { createGame, normalizeFen, turnFromFen } from './game';
 import type { Game } from './game';
 import { startEngine } from './engine';
 import type { Score, SearchInfo } from './engine';
 import { openStore } from './store';
 import { buildCard, importPgn } from './import';
-import type { ImportProgress } from './import';
+import type { ImportOptions, ImportProgress } from './import';
 import {
     combineGrades,
     evalDrop,
@@ -28,12 +29,20 @@ import {
 import type { Card, Grade } from './review';
 import { currentTheme, toggleTheme } from './theme';
 import type { Theme } from './theme';
+import { initBoardSize, makeResizable } from './resize';
+import { createMoveList } from './movelist';
+import type { MoveListView, MoveTone } from './movelist';
 
 const MIN_EVAL_DEPTH = 8;
 const MATE_FRACTION = 0.97;
 const REVIEW_TIME_MS = 1000; // "Review: ~1s, and ideally never hit at all."
 
-const GRADE_LABELS: Record<Grade, string> = { 1: 'Again', 2: 'Hard', 3: 'Good', 4: 'Easy' };
+// FSRS's own vocabulary (Again/Hard/Good/Easy) describes recall difficulty,
+// not move quality -- "Good" in particular reads as reassuring when a
+// 30-100cp drop is still a real mistake. These read the way a chess move
+// actually should: only the best-available move reads as good.
+const GRADE_LABELS: Record<Grade, string> = { 1: 'Blunder', 2: 'Mistake', 3: 'Inaccuracy', 4: 'Best' };
+const GRADE_TONES: Record<Grade, MoveTone> = { 1: 'bad', 2: 'bad', 3: 'warn', 4: 'good' };
 
 type ScreenName = 'play' | 'import' | 'review';
 
@@ -48,7 +57,15 @@ function sanForUci(pos: Position, uci: string): string | undefined {
     return move ? makeSan(pos, move) : undefined;
 }
 
+function statusText(outcome: { winner: Color | undefined } | undefined): string {
+    if (!outcome) return '';
+    if (!outcome.winner) return 'Draw';
+    return `${outcome.winner === 'white' ? 'White' : 'Black'} wins`;
+}
+
 export async function startApp(): Promise<void> {
+    initBoardSize();
+
     const dom = {
         navButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('.nav-btn')),
         dueCount: el('due-count'),
@@ -59,11 +76,17 @@ export async function startApp(): Promise<void> {
             review: el('screen-review'),
         } satisfies Record<ScreenName, HTMLElement>,
 
+        boardWrap: el('board-wrap'),
+        boardResize: el('board-resize'),
         board: el('board'),
+        playWhiteBtn: el<HTMLButtonElement>('play-white-btn'),
+        playBlackBtn: el<HTMLButtonElement>('play-black-btn'),
         reset: el<HTMLButtonElement>('reset'),
         status: el('status'),
         history: el('history'),
 
+        studySide: el<HTMLSelectElement>('study-side'),
+        includeOpponentBlunders: el<HTMLInputElement>('include-opponent-blunders'),
         pgnInput: el<HTMLTextAreaElement>('pgn-input'),
         importBtn: el<HTMLButtonElement>('import-btn'),
         importProgress: el('import-progress'),
@@ -75,15 +98,21 @@ export async function startApp(): Promise<void> {
         importFile: el<HTMLInputElement>('import-file'),
         collectionResult: el('collection-result'),
 
+        reviewBoardWrap: el('review-board-wrap'),
+        reviewResize: el('review-resize'),
         reviewBoard: el('review-board'),
         reviewInfo: el('review-info'),
         reviewFeedback: el('review-feedback'),
+        reviewHistory: el('review-history'),
         showCorrectBtn: el<HTMLButtonElement>('show-correct-btn'),
         nextCardBtn: el<HTMLButtonElement>('next-card-btn'),
     };
 
     const engine = await startEngine();
     const store = await openStore();
+
+    makeResizable(dom.boardWrap, dom.boardResize);
+    makeResizable(dom.reviewBoardWrap, dom.reviewResize);
 
     // ---- Theme toggle ----------------------------------------------------
     // Label reads as what clicking it *does*, not the mode it's currently
@@ -97,6 +126,12 @@ export async function startApp(): Promise<void> {
     });
 
     // ---- Screen switching ----------------------------------------------
+    function activeScreen(): ScreenName | null {
+        for (const [key, screen] of Object.entries(dom.screens)) {
+            if (screen.classList.contains('active')) return key as ScreenName;
+        }
+        return null;
+    }
     function showScreen(name: ScreenName) {
         for (const [key, screen] of Object.entries(dom.screens)) {
             screen.classList.toggle('active', key === name);
@@ -110,6 +145,30 @@ export async function startApp(): Promise<void> {
         btn.addEventListener('click', () => showScreen(btn.dataset.screen as ScreenName));
     }
 
+    // Up/Down jump to the start/end of the game; Left/Right step one ply.
+    // Ignored while typing in a text field, and scoped to whichever screen
+    // is actually showing a board.
+    document.addEventListener('keydown', (e) => {
+        if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const screen = activeScreen();
+        if (screen === 'play') {
+            e.preventDefault();
+            viewPly = stepPly(e.key, viewPly, playGame.plyCount());
+            refreshPlay();
+        } else if (screen === 'review' && reviewGame) {
+            e.preventDefault();
+            reviewViewPly = stepPly(e.key, reviewViewPly, reviewGame.plyCount());
+            refreshReviewBoard();
+        }
+    });
+    function stepPly(key: string, current: number, max: number): number {
+        if (key === 'ArrowUp') return 0;
+        if (key === 'ArrowDown') return max;
+        if (key === 'ArrowLeft') return Math.max(0, current - 1);
+        return Math.min(max, current + 1); // ArrowRight
+    }
+
     async function refreshDueCount() {
         const due = await store.getDueCards(new Date());
         dom.dueCount.textContent = due.length ? ` (${due.length})` : '';
@@ -117,36 +176,51 @@ export async function startApp(): Promise<void> {
     void refreshDueCount();
 
     // ---- Play screen: free play against the engine ---------------------
-    // (Same behaviour as stages 1-2; just relocated into the controller.)
     let playGame: Game = createGame();
-    let interactive = true;
+    let humanColor: Color = 'white';
+    let interactive = true; // false while the engine is actually thinking
+    let viewPly = 0; // which ply is displayed; may lag the live position
     let latestEvalFraction: number | null = null;
     let evalFrameScheduled = false;
 
     const playBoard: BoardView = createBoard(dom.board, onPlayMove);
+    const playMoveList: MoveListView = createMoveList(dom.history, (ply) => {
+        viewPly = ply;
+        refreshPlay();
+    });
 
-    dom.reset.addEventListener('click', resetPlay);
+    dom.reset.addEventListener('click', () => resetPlay());
+    dom.playWhiteBtn.addEventListener('click', () => resetPlay('white'));
+    dom.playBlackBtn.addEventListener('click', () => resetPlay('black'));
     refreshPlay();
 
-    function resetPlay() {
+    function resetPlay(color?: Color) {
         engine.stop();
+        if (color) humanColor = color;
+        dom.playWhiteBtn.classList.toggle('active', humanColor === 'white');
+        dom.playBlackBtn.classList.toggle('active', humanColor === 'black');
         playGame = createGame();
+        viewPly = 0;
         interactive = true;
         latestEvalFraction = null;
         refreshPlay();
         playBoard.renderEval(null);
+        if (playGame.turn() !== humanColor) void triggerEngineMove();
     }
 
     function refreshPlay() {
+        const fen = playGame.fenAt(viewPly);
+        const live = viewPly === playGame.plyCount();
+        const canDrag = live && interactive && turnFromFen(fen) === humanColor;
         playBoard.render({
-            fen: playGame.fen(),
-            turn: playGame.turn(),
-            dests: chessgroundDests(playGame.position()),
-            interactive,
+            fen,
+            turn: turnFromFen(fen),
+            dests: canDrag ? chessgroundDests(playGame.position()) : new Map(),
+            interactive: canDrag,
+            orientation: humanColor,
         });
-        dom.history.textContent = playGame.history().join(' ');
-        const outcome = playGame.outcome();
-        dom.status.textContent = !outcome ? '' : !outcome.winner ? 'Draw' : `${outcome.winner === 'white' ? 'White' : 'Black'} wins`;
+        playMoveList.render(playGame.history(), viewPly === 0 ? null : viewPly);
+        dom.status.textContent = statusText(playGame.outcome());
     }
 
     function scoreToFraction(score: Score): number {
@@ -165,19 +239,14 @@ export async function startApp(): Promise<void> {
         });
     }
 
-    async function onPlayMove(orig: Key, dest: Key) {
-        const from = parseSquare(orig)!;
-        const to = parseSquare(dest)!;
-        playGame.playSquares(from, to);
-        refreshPlay();
-        if (playGame.isEnd()) return;
-
+    async function triggerEngineMove() {
         interactive = false;
         refreshPlay();
         playBoard.renderEval(null);
         try {
             const uci = await engine.bestMove(playGame.fen(), onSearchInfo);
             playGame.playUci(uci);
+            viewPly = playGame.plyCount();
         } catch {
             // Search was stopped (e.g. reset mid-think). Nothing to play.
         } finally {
@@ -187,15 +256,29 @@ export async function startApp(): Promise<void> {
         }
     }
 
+    async function onPlayMove(orig: Key, dest: Key) {
+        const from = parseSquare(orig)!;
+        const to = parseSquare(dest)!;
+        playGame.playSquares(from, to);
+        viewPly = playGame.plyCount();
+        refreshPlay();
+        if (playGame.isEnd()) return;
+        await triggerEngineMove();
+    }
+
     // ---- Import screen: PGN blunder detection, manual entry, and the
     // collection's export/import (spec steps 3, 6, 8) -----------------
     dom.importBtn.addEventListener('click', async () => {
         const pgn = dom.pgnInput.value.trim();
         if (!pgn) return;
+        const options: ImportOptions = {
+            studySide: dom.studySide.value === 'black' ? 'black' : 'white',
+            includeOpponentBlunders: dom.includeOpponentBlunders.checked,
+        };
         dom.importBtn.disabled = true;
         dom.importResult.textContent = '';
         try {
-            const result = await importPgn(pgn, engine, store, (p: ImportProgress) => {
+            const result = await importPgn(pgn, engine, store, options, (p: ImportProgress) => {
                 dom.importProgress.textContent = `${p.phase === 'scan' ? 'Scanning' : 'Analysing'} ${p.current}/${p.total} (${p.detail})`;
             });
             dom.importResult.textContent =
@@ -261,9 +344,11 @@ export async function startApp(): Promise<void> {
     // ---- Review screen ---------------------------------------------------
     let reviewGame: Game | null = null;
     let currentCard: Card | null = null;
+    let reviewViewPly = 0;
     let stepIndex = 0;
     let attemptSteps: { grade: Grade; dropCp: number }[] = [];
     let pendingCorrectSan: string | undefined;
+    let pendingCorrectUci: string | undefined;
     // Set once an attempt ends (fail or complete) so a stray drag before
     // "Next card" is clicked can't replay into an already-graded card and
     // double-schedule its FSRS state. Same pattern as Play mode's
@@ -271,10 +356,17 @@ export async function startApp(): Promise<void> {
     let reviewLocked = false;
 
     const reviewBoard: BoardView = createBoard(dom.reviewBoard, onReviewMove);
+    const reviewMoveList: MoveListView = createMoveList(dom.reviewHistory, (ply) => {
+        reviewViewPly = ply;
+        refreshReviewBoard();
+    });
 
     dom.nextCardBtn.addEventListener('click', () => void loadNextCard());
     dom.showCorrectBtn.addEventListener('click', () => {
-        dom.reviewFeedback.textContent += pendingCorrectSan ? ` Correct move: ${pendingCorrectSan}.` : ' (no line recorded)';
+        if (pendingCorrectUci) {
+            reviewBoard.showHint(pendingCorrectUci.slice(0, 2) as Key, pendingCorrectUci.slice(2, 4) as Key);
+        }
+        dom.reviewFeedback.textContent += pendingCorrectSan ? ` Correct move: ${pendingCorrectSan}.` : '';
         dom.showCorrectBtn.hidden = true;
     });
 
@@ -282,9 +374,11 @@ export async function startApp(): Promise<void> {
         const due = await store.getDueCards(new Date());
         const card = pickDueCard(due, new Date()) ?? null;
         currentCard = card;
+        reviewViewPly = 0;
         stepIndex = 0;
         attemptSteps = [];
         pendingCorrectSan = undefined;
+        pendingCorrectUci = undefined;
         reviewLocked = false;
         dom.showCorrectBtn.hidden = true;
         dom.nextCardBtn.hidden = true;
@@ -293,7 +387,8 @@ export async function startApp(): Promise<void> {
         if (!card) {
             reviewGame = null;
             dom.reviewInfo.textContent = due.length === 0 ? 'No cards due. Nothing to review right now.' : '';
-            reviewBoard.render({ fen: makeFen(Chess.default().toSetup()), turn: 'white', dests: new Map(), interactive: false });
+            reviewBoard.render({ fen: makeFen(Chess.default().toSetup()), turn: 'white', dests: new Map(), interactive: false, orientation: 'white' });
+            dom.reviewHistory.innerHTML = '';
             return;
         }
         reviewGame = createGame(card.fen);
@@ -303,16 +398,23 @@ export async function startApp(): Promise<void> {
     }
 
     function refreshReviewBoard() {
-        if (!reviewGame) return;
+        if (!reviewGame || !currentCard) return;
+        const live = reviewViewPly === reviewGame.plyCount();
         reviewBoard.render({
-            fen: reviewGame.fen(),
-            turn: reviewGame.turn(),
-            dests: chessgroundDests(reviewGame.position()),
+            fen: reviewGame.fenAt(reviewViewPly),
+            turn: turnFromFen(reviewGame.fenAt(reviewViewPly)),
+            dests: (live && !reviewLocked) ? chessgroundDests(reviewGame.position()) : new Map(),
             // No free engine opponent here -- the reviewer plays every ply --
             // but once the attempt has ended, further drags must be refused
             // until "Next card", not silently re-graded into the same card.
-            interactive: !reviewLocked,
+            interactive: live && !reviewLocked,
+            orientation: currentCard.sideToMove,
         });
+        reviewMoveList.render(
+            reviewGame.history(),
+            reviewViewPly === 0 ? null : reviewViewPly,
+            attemptSteps.map((s) => GRADE_TONES[s.grade]),
+        );
     }
 
     // Cache-first, per the spec: the correct path should already be
@@ -346,6 +448,7 @@ export async function startApp(): Promise<void> {
             refreshReviewBoard();
             return;
         }
+        reviewViewPly = reviewGame.plyCount();
 
         // Lock immediately -- grading below awaits the engine, and nothing
         // should be draggable while that's in flight, same reasoning as
@@ -368,9 +471,11 @@ export async function startApp(): Promise<void> {
         const grade = gradeForDrop(drop);
         attemptSteps.push({ grade, dropCp: drop });
         dom.reviewFeedback.textContent = `${san}: ${GRADE_LABELS[grade]} (${drop >= 0 ? '-' : '+'}${Math.abs(drop)}cp)`;
+        refreshReviewBoard();
 
         if (grade === 1) {
             pendingCorrectSan = correctSan;
+            pendingCorrectUci = correctUci;
             await finishAttempt();
             return;
         }

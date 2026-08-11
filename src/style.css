@@ -5,6 +5,10 @@
    in-app toggle wins in both directions). Every color used anywhere below
    comes from one of these -- nothing is declared only inside a media query
    or [data-theme] block.
+
+   --board-* and --hint-color are deliberately *not* redefined anywhere:
+   the board itself (squares, move highlights, check) stays one fixed look
+   regardless of theme -- only the chrome around it switches.
    ========================================================================== */
 
 :root {
@@ -20,8 +24,11 @@
   --warn: #b8842e;
   --bad: #c24545;
   --bad-rgb: 194, 69, 69;
+
   --board-a: #fbfbf9; /* light squares */
   --board-b: #e6e4dd; /* dark squares */
+  --board-accent-rgb: 46, 107, 99; /* move-dest / selected / last-move */
+  --board-bad-rgb: 194, 69, 69; /* check */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,8 +45,6 @@
     --warn: #d1a13f;
     --bad: #d16f6f;
     --bad-rgb: 209, 111, 111;
-    --board-a: #35373a;
-    --board-b: #202124;
   }
 }
 
@@ -56,8 +61,6 @@
   --warn: #d1a13f;
   --bad: #d16f6f;
   --bad-rgb: 209, 111, 111;
-  --board-a: #35373a;
-  --board-b: #202124;
 }
 
 /* ==========================================================================
@@ -77,7 +80,7 @@ body {
   padding: 1.5rem 1rem 3rem;
 }
 
-button, input, textarea {
+button, input, textarea, select {
   font-family: inherit;
   color: inherit;
 }
@@ -106,6 +109,11 @@ button, input, textarea {
   font-weight: 600;
   font-size: 1.05rem;
   letter-spacing: -0.01em;
+}
+
+.wordmark em {
+  font-style: normal;
+  color: var(--accent);
 }
 
 .nav-tabs {
@@ -172,10 +180,10 @@ button, input, textarea {
 .screen.active { display: flex; }
 
 /* ==========================================================================
-   Board coloring, shared by the Play and Review boards. A pure-CSS
-   checkerboard (a conic-gradient tile repeated 4x4) rather than a baked
-   SVG, so it re-colors with the theme tokens above instead of needing a
-   second image. Piece art stays cburnett (chessground.cburnett.css).
+   Board coloring, shared by the Play and Review boards, and deliberately
+   independent of the light/dark tokens above -- see the note in the
+   token block. A pure-CSS checkerboard (a repeated conic-gradient tile)
+   rather than a baked SVG. Piece art is unchanged (chessground.cburnett.css).
    ========================================================================== */
 
 cg-board {
@@ -188,34 +196,76 @@ cg-board {
 }
 
 cg-board square.move-dest {
-  background: radial-gradient(rgba(var(--accent-rgb), 0.45) 22%, transparent 0);
+  background: radial-gradient(rgba(var(--board-accent-rgb), 0.45) 22%, transparent 0);
 }
 
 cg-board square.oc.move-dest {
-  background: radial-gradient(transparent 0%, transparent 80%, rgba(var(--accent-rgb), 0.4) 80%);
+  background: radial-gradient(transparent 0%, transparent 80%, rgba(var(--board-accent-rgb), 0.4) 80%);
 }
 
 cg-board square.move-dest:hover,
 cg-board square.move-dest.hover {
-  background: rgba(var(--accent-rgb), 0.3);
+  background: rgba(var(--board-accent-rgb), 0.3);
 }
 
 cg-board square.last-move {
-  background-color: rgba(var(--accent-rgb), 0.22);
+  background-color: rgba(var(--board-accent-rgb), 0.22);
 }
 
 cg-board square.selected {
-  background-color: rgba(var(--accent-rgb), 0.5);
+  background-color: rgba(var(--board-accent-rgb), 0.5);
 }
 
 cg-board square.check {
   background: radial-gradient(
     ellipse at center,
-    rgba(var(--bad-rgb), 0.9) 0%,
-    rgba(var(--bad-rgb), 0.55) 30%,
-    rgba(var(--bad-rgb), 0) 85%
+    rgba(var(--board-bad-rgb), 0.9) 0%,
+    rgba(var(--board-bad-rgb), 0.55) 30%,
+    rgba(var(--board-bad-rgb), 0) 85%
   );
 }
+
+/* ==========================================================================
+   Board sizing + resize handle, shared by Play and Review. One preference
+   (--board-size, set by resize.ts) drives both boards' width; the wrapper
+   owns the square aspect ratio so the handle has a fixed corner to sit on.
+   ========================================================================== */
+
+#board-wrap,
+#review-board-wrap {
+  position: relative;
+  width: var(--board-size, min(34rem, 90vw));
+  aspect-ratio: 1;
+  flex: none;
+}
+
+#board,
+#review-board {
+  width: 100%;
+  height: 100%;
+}
+
+.resize-handle {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--muted) 0, var(--muted) 1.5px,
+    transparent 1.5px, transparent 5px
+  );
+  background-position: bottom right;
+  background-repeat: no-repeat;
+  background-size: 12px 12px;
+  opacity: 0.55;
+  border-radius: 0 0 4px 0;
+}
+
+.resize-handle:hover { opacity: 1; }
 
 /* ==========================================================================
    Play screen
@@ -225,12 +275,6 @@ cg-board square.check {
   display: flex;
   gap: 0.6rem;
   align-items: stretch;
-}
-
-#board,
-#review-board {
-  width: 100%;
-  aspect-ratio: 1;
 }
 
 #eval-bar {
@@ -262,10 +306,39 @@ cg-board square.check {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.side-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
+}
+
+.side-picker-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-right: 0.2rem;
+}
+
+.side-btn {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.side-btn.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 #reset {
-  align-self: flex-start;
   background: none;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -281,24 +354,65 @@ cg-board square.check {
   min-height: 1.2em;
 }
 
-#history {
-  font-family: ui-monospace, monospace;
-  font-size: 0.9rem;
-  color: var(--muted);
-  line-height: 1.5;
-  word-break: break-word;
-}
-
 @media (min-width: 720px) {
   #screen-play.active {
     display: grid;
-    grid-template-columns: minmax(0, 34rem) 1fr;
+    grid-template-columns: auto 1fr;
     gap: 2.5rem;
     align-items: start;
   }
 
   #panel { padding-top: 0.5rem; }
 }
+
+/* ==========================================================================
+   Move list -- shared by Play's history and Review's line-so-far. Numbered
+   pairs, each move a small button: clickable (and reachable via Up/Down/
+   Left/Right, wired in controller.ts), the one currently being viewed
+   shaded, and -- where a grade is known -- a quiet color signal for
+   whether it was actually a good move, not just "recalled easily".
+   ========================================================================== */
+
+.move-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.5rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+}
+
+.move-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.move-num {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.move {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  position: relative;
+}
+
+.move:hover { background: var(--panel); }
+
+.move.active {
+  background: rgba(var(--accent-rgb), 0.16);
+  font-weight: 600;
+}
+
+.move.tone-good { color: var(--good); }
+.move.tone-warn { color: var(--warn); }
+.move.tone-bad { color: var(--bad); }
 
 /* ==========================================================================
    Import screen -- a utility screen, styled quietly rather than boxed:
@@ -325,6 +439,28 @@ cg-board square.check {
   font-weight: 600;
 }
 
+.select-label,
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.select-label select {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+.checkbox-label input {
+  accent-color: var(--accent);
+}
+
 #pgn-input {
   width: 100%;
   min-height: 8rem;
@@ -339,7 +475,7 @@ cg-board square.check {
 
 .form-row {
   display: flex;
-  gap: 0.6rem;
+  gap: 1rem;
   flex-wrap: wrap;
   align-items: center;
 }
@@ -427,7 +563,7 @@ cg-board square.check {
 @media (min-width: 720px) {
   #screen-review.active {
     display: grid;
-    grid-template-columns: minmax(0, 34rem) 1fr;
+    grid-template-columns: auto 1fr;
     gap: 2.5rem;
     align-items: start;
   }

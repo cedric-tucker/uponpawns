@@ -29,6 +29,20 @@ export const BLUNDER_THRESHOLD_CP = 100;
 // Fixed count for now, decided per-card at import time as suggested there.
 export const CORRECT_LINE_PLIES = 6;
 
+export interface ImportOptions {
+    // Which side you're studying. A blunder by this side becomes a card at
+    // the position *before* the mistake (find the move you missed); a
+    // blunder by the other side becomes a card at the position *after* it
+    // (find how to punish it) -- either way the card's side-to-move is
+    // always studySide, since that's the only color you'll ever be asked
+    // to play in review.
+    studySide: Color;
+    // Off by default: most of the time you want to drill your own misses,
+    // not build a whole second collection out of every mistake the
+    // opponent made.
+    includeOpponentBlunders: boolean;
+}
+
 export interface ImportProgress {
     phase: 'scan' | 'deepen';
     current: number;
@@ -44,13 +58,10 @@ export interface ImportResult {
 }
 
 interface FlaggedSpot {
-    fen: string; // normalised, before the blunder move
-    sideToMove: Color;
+    fen: string; // normalised; side to move here is always options.studySide
     moveNumber: number;
     evalBefore: Score;
     evalAfter: Score;
-    mirrorFen: string; // normalised, after the blunder move
-    mirrorEval: Score;
 }
 
 async function evalOnly(engine: Engine, fen: string, options: AnalyzeOptions): Promise<Score | undefined> {
@@ -137,6 +148,7 @@ export async function importPgn(
     pgn: string,
     engine: Engine,
     store: Store,
+    options: ImportOptions,
     onProgress?: (p: ImportProgress) => void,
 ): Promise<ImportResult> {
     const games = parsePgn(pgn);
@@ -177,38 +189,32 @@ export async function importPgn(
         const evalAfter = await evalOnly(engine, afterFen, { depth: SCAN_DEPTH, multiPv: 1 });
         if (!evalAfter) continue;
 
-        if (evalDrop(mover, evalBefore, evalAfter) >= BLUNDER_THRESHOLD_CP) {
-            flagged.push({
-                fen: normalizeFen(beforeFen),
-                sideToMove: mover,
-                moveNumber,
-                evalBefore,
-                evalAfter,
-                mirrorFen: normalizeFen(afterFen),
-                mirrorEval: evalAfter,
-            });
+        if (evalDrop(mover, evalBefore, evalAfter) < BLUNDER_THRESHOLD_CP) continue;
+
+        if (mover === options.studySide) {
+            // Your own blunder: drill the position before it, so next time
+            // you find the move you missed instead of repeating it.
+            flagged.push({ fen: normalizeFen(beforeFen), moveNumber, evalBefore, evalAfter });
+        } else if (options.includeOpponentBlunders) {
+            // The opponent's blunder: drill the position after it (which is
+            // exactly studySide to move, since there are only two colors)
+            // so you learn to punish it. evalBefore/evalAfter here both
+            // just record this position's own eval -- there's no "your
+            // move" to compare against yet, that's what the review grades.
+            flagged.push({ fen: normalizeFen(afterFen), moveNumber, evalBefore: evalAfter, evalAfter });
         }
     }
 
-    // Pass 2: deepen each flagged spot, plus its mirror -- "practise seizing
-    // the advantage they gave away." Same Card shape, no special-casing.
+    // Pass 2: deepen each flagged spot into a full card.
     let cardsCreated = 0;
     let cardsSkipped = 0;
     for (let i = 0; i < flagged.length; i++) {
         const spot = flagged[i];
         onProgress?.({ phase: 'deepen', current: i + 1, total: flagged.length, detail: `blunder ${i + 1}/${flagged.length}` });
 
-        const card = await buildCard(engine, spot.fen, spot.sideToMove, gameId, spot.moveNumber, spot.evalBefore, spot.evalAfter);
+        const card = await buildCard(engine, spot.fen, options.studySide, gameId, spot.moveNumber, spot.evalBefore, spot.evalAfter);
         const cardResult = await store.addCard(card);
         if (cardResult === 'inserted') cardsCreated++;
-        else cardsSkipped++;
-
-        const mirrorSide: Color = spot.sideToMove === 'white' ? 'black' : 'white';
-        // This card wasn't itself discovered via a blunder of its own, so
-        // evalBefore/evalAfter both just record this position's own eval.
-        const mirrorCard = await buildCard(engine, spot.mirrorFen, mirrorSide, gameId, spot.moveNumber, spot.mirrorEval, spot.mirrorEval);
-        const mirrorResult = await store.addCard(mirrorCard);
-        if (mirrorResult === 'inserted') cardsCreated++;
         else cardsSkipped++;
     }
 

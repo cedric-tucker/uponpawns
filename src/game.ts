@@ -15,6 +15,11 @@ export interface Game {
     isEnd(): boolean;
     outcome(): { winner: Color | undefined } | undefined;
     history(): readonly string[];
+    /** FEN after `ply` half-moves (0 = the starting position this game was
+     *  created with). Lets a viewer step through history without a second
+     *  position of its own. */
+    fenAt(ply: number): string;
+    plyCount(): number;
     /** Pawn reaching the back rank needs a promotion role or chessops leaves an
      *  illegal pawn sitting on rank 1/8 -- this fills it in (auto-queen). */
     isPromotion(from: number, to: number): boolean;
@@ -32,9 +37,14 @@ export function normalizeFen(fen: string): string {
     return fen.split(' ').slice(0, 4).join(' ');
 }
 
+export function turnFromFen(fen: string): Color {
+    return fen.split(' ')[1] === 'b' ? 'black' : 'white';
+}
+
 export function createGame(startFen?: string): Game {
     let pos: Position = startFen ? Chess.fromSetup(parseFen(startFen).unwrap()).unwrap() : Chess.default();
     let moves: string[] = [];
+    let fens: string[] = [makeFen(pos.toSetup())];
 
     function isPromotion(from: number, to: number): boolean {
         const piece = pos.board.get(from);
@@ -46,6 +56,7 @@ export function createGame(startFen?: string): Game {
     function play(move: Move): string {
         const san = makeSanAndPlay(pos, move);
         moves.push(san);
+        fens.push(makeFen(pos.toSetup()));
         return san;
     }
 
@@ -56,6 +67,8 @@ export function createGame(startFen?: string): Game {
         isEnd: () => pos.isEnd(),
         outcome: () => pos.outcome(),
         history: () => moves,
+        fenAt: (ply) => fens[ply] ?? fens[fens.length - 1],
+        plyCount: () => moves.length,
         isPromotion,
         playSquares: (from, to) => {
             const move: NormalMove = { from, to, promotion: isPromotion(from, to) ? 'queen' : undefined };
@@ -69,10 +82,12 @@ export function createGame(startFen?: string): Game {
         reset: () => {
             pos = Chess.default();
             moves = [];
+            fens = [makeFen(pos.toSetup())];
         },
         load: (fen) => {
             pos = Chess.fromSetup(parseFen(fen).unwrap()).unwrap();
             moves = [];
+            fens = [makeFen(pos.toSetup())];
         },
     };
 }

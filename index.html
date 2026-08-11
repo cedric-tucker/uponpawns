@@ -21,7 +21,7 @@
   <body>
     <div id="app">
       <nav id="nav">
-        <div class="wordmark">uponpawns</div>
+        <div class="wordmark">upon<em>pawns</em></div>
         <div class="nav-tabs">
           <button class="nav-btn" data-screen="play">Play</button>
           <button class="nav-btn" data-screen="import">Import</button>
@@ -33,18 +33,39 @@
       <section id="screen-play" class="screen">
         <div id="board-row">
           <div id="eval-bar"><div id="eval-fill"></div></div>
-          <div id="board"></div>
+          <div id="board-wrap">
+            <div id="board"></div>
+            <div id="board-resize" class="resize-handle" aria-hidden="true"></div>
+          </div>
         </div>
         <div id="panel">
+          <div class="side-picker">
+            <span class="side-picker-label">Playing as</span>
+            <button id="play-white-btn" class="side-btn active" type="button">White</button>
+            <button id="play-black-btn" class="side-btn" type="button">Black</button>
+          </div>
           <button id="reset">Reset</button>
           <div id="status"></div>
-          <div id="history"></div>
+          <div id="history" class="move-list"></div>
         </div>
       </section>
 
       <section id="screen-import" class="screen">
         <div class="import-block">
           <h2>Import a game</h2>
+          <div class="form-row">
+            <label class="select-label">
+              Studying as
+              <select id="study-side">
+                <option value="white">White</option>
+                <option value="black">Black</option>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="include-opponent-blunders" />
+              Also include the opponent's blunders
+            </label>
+          </div>
           <textarea id="pgn-input" placeholder="Paste PGN here"></textarea>
           <button id="import-btn">Import &amp; find blunders</button>
           <div id="import-progress" class="hint"></div>
@@ -75,7 +96,10 @@
 
       <section id="screen-review" class="screen">
         <div id="review-board-row">
-          <div id="review-board"></div>
+          <div id="review-board-wrap">
+            <div id="review-board"></div>
+            <div id="review-resize" class="resize-handle" aria-hidden="true"></div>
+          </div>
         </div>
         <div id="review-panel">
           <div id="review-info"></div>
@@ -84,6 +108,7 @@
             <button id="show-correct-btn" hidden>Show correct move</button>
             <button id="next-card-btn" hidden>Next card</button>
           </div>
+          <div id="review-history" class="move-list"></div>
         </div>
       </section>
     </div>
