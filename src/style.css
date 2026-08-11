@@ -208,6 +208,21 @@ button, input, textarea, select {
   pointer-events: none;
 }
 
+/* Ephemeral snippets spawned by ambientglitch.ts -- positioned by JS via
+   left/top percentages of the (relatively-positioned) .home-screen. */
+.home-ambient-glitch {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: rgba(89, 179, 167, 0.6);
+  opacity: 1;
+  transition: opacity 400ms ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .home-content {
   position: relative;
   z-index: 1;

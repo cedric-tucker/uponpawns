@@ -33,6 +33,7 @@ import { initBoardSize, makeResizable } from './resize';
 import { createMoveList } from './movelist';
 import type { MoveListView, MoveTone } from './movelist';
 import { glitchText } from './glitchtext';
+import { startAmbientGlitches } from './ambientglitch';
 import { mountPawnParticles } from './pawnparticles';
 
 const MIN_EVAL_DEPTH = 8;
@@ -170,6 +171,7 @@ export async function startApp(): Promise<void> {
     // doesn't belong on the working screens (particle field, glitch text).
     const particleField = mountPawnParticles(dom.homeCanvas, dom.homeParticlesAnchor, HOME_DOT_COLOR);
     glitchText(dom.homeHeadline, HOME_HEADLINE_FONT);
+    startAmbientGlitches(dom.screens.home, HOME_HEADLINE_FONT);
 
     // Up/Down jump to the start/end of the game; Left/Right step one ply.
     // Ignored while typing in a text field, and scoped to whichever screen
