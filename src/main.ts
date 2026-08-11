@@ -9,6 +9,12 @@ import { parseSquare } from 'chessops/util';
 
 import './style.css'
 
+import { startEngine } from './engine';
+import { makeFen } from 'chessops/fen';
+import { start } from '@lichess-org/chessground/drag';
+
+
+
 const board = document.getElementById('board');
 if (!board) throw new Error('Board not found');
 
@@ -42,3 +48,6 @@ ground.set({
     },
   },
 });
+
+const engine = await startEngine();
+console.log(await engine.bestMove(makeFen(pos.toSetup())))
