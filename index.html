@@ -5,9 +5,88 @@
     <!-- <link rel="icon" type="image/svg+xml" href="/favicon.svg" /> FAVICON change source later -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>uponpawns</title>
+    <script>
+      // Applied before anything else loads, so there's no flash of the
+      // wrong theme on first paint. Kept in sync with src/theme.ts, which
+      // is what the in-app toggle talks to afterward.
+      (function () {
+        var stored = localStorage.getItem('uponpawns:theme');
+        var theme = stored === 'light' || stored === 'dark'
+          ? stored
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
-    <div id="board"></div>
+    <div id="app">
+      <nav id="nav">
+        <div class="wordmark">uponpawns</div>
+        <div class="nav-tabs">
+          <button class="nav-btn" data-screen="play">Play</button>
+          <button class="nav-btn" data-screen="import">Import</button>
+          <button class="nav-btn" data-screen="review">Review<span id="due-count"></span></button>
+        </div>
+        <button id="theme-toggle" type="button" aria-label="Switch color theme"></button>
+      </nav>
+
+      <section id="screen-play" class="screen">
+        <div id="board-row">
+          <div id="eval-bar"><div id="eval-fill"></div></div>
+          <div id="board"></div>
+        </div>
+        <div id="panel">
+          <button id="reset">Reset</button>
+          <div id="status"></div>
+          <div id="history"></div>
+        </div>
+      </section>
+
+      <section id="screen-import" class="screen">
+        <div class="import-block">
+          <h2>Import a game</h2>
+          <textarea id="pgn-input" placeholder="Paste PGN here"></textarea>
+          <button id="import-btn">Import &amp; find blunders</button>
+          <div id="import-progress" class="hint"></div>
+          <div id="import-result" class="hint"></div>
+        </div>
+
+        <div class="import-block">
+          <h2>Manual card</h2>
+          <div class="form-row">
+            <input id="manual-fen" type="text" placeholder="FEN of a position you want to drill" />
+            <button id="manual-add-btn">Add card</button>
+          </div>
+          <div id="manual-result" class="hint"></div>
+        </div>
+
+        <div class="import-block">
+          <h2>Collection</h2>
+          <div class="form-row">
+            <button id="export-btn">Export collection</button>
+            <label class="file-btn">
+              Import collection
+              <input id="import-file" type="file" accept="application/json" />
+            </label>
+          </div>
+          <div id="collection-result" class="hint"></div>
+        </div>
+      </section>
+
+      <section id="screen-review" class="screen">
+        <div id="review-board-row">
+          <div id="review-board"></div>
+        </div>
+        <div id="review-panel">
+          <div id="review-info"></div>
+          <div id="review-feedback"></div>
+          <div id="review-controls">
+            <button id="show-correct-btn" hidden>Show correct move</button>
+            <button id="next-card-btn" hidden>Next card</button>
+          </div>
+        </div>
+      </section>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

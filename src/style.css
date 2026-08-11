@@ -1,14 +1,436 @@
+/* ==========================================================================
+   Tokens. Light is the default palette on bare :root; dark redefines the
+   same tokens under a system-preference media query (guarded so an explicit
+   light choice still wins) and again under [data-theme="dark"] (so the
+   in-app toggle wins in both directions). Every color used anywhere below
+   comes from one of these -- nothing is declared only inside a media query
+   or [data-theme] block.
+   ========================================================================== */
+
+:root {
+  --bg: #fafaf7;
+  --panel: #f2f1ec;
+  --ink: #1b1d1f;
+  --muted: #6b7076;
+  --line: #e4e2dc;
+  --accent: #2e6b63;
+  --accent-rgb: 46, 107, 99;
+  --accent-ink: #fbfbf9;
+  --good: #3e8b57;
+  --warn: #b8842e;
+  --bad: #c24545;
+  --bad-rgb: 194, 69, 69;
+  --board-a: #fbfbf9; /* light squares */
+  --board-b: #e6e4dd; /* dark squares */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #17181a;
+    --panel: #1e1f21;
+    --ink: #edece8;
+    --muted: #9a9d9f;
+    --line: #2b2c2e;
+    --accent: #59b3a7;
+    --accent-rgb: 89, 179, 167;
+    --accent-ink: #0c1211;
+    --good: #56a86e;
+    --warn: #d1a13f;
+    --bad: #d16f6f;
+    --bad-rgb: 209, 111, 111;
+    --board-a: #35373a;
+    --board-b: #202124;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #17181a;
+  --panel: #1e1f21;
+  --ink: #edece8;
+  --muted: #9a9d9f;
+  --line: #2b2c2e;
+  --accent: #59b3a7;
+  --accent-rgb: 89, 179, 167;
+  --accent-ink: #0c1211;
+  --good: #56a86e;
+  --warn: #d1a13f;
+  --bad: #d16f6f;
+  --bad-rgb: 209, 111, 111;
+  --board-a: #35373a;
+  --board-b: #202124;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+* { box-sizing: border-box; }
+
 body {
   margin: 0;
   min-height: 100dvh;
-  font-family: system-ui, sans-serif;
-  background-color: black;
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
   display: grid;
-  place-items: center;
+  place-items: start center;
+  padding: 1.5rem 1rem 3rem;
 }
 
-#board {
-  width: min(90vw, 70vh);
+button, input, textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  width: min(94vw, 76rem);
+}
+
+/* ==========================================================================
+   Nav: a wordmark, quiet text tabs (not buttons), and a theme toggle --
+   chrome that recedes so the board stays the thing you look at.
+   ========================================================================== */
+
+#nav {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark {
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 1.75rem;
+  flex: 1;
+}
+
+.nav-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.nav-btn.active {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.nav-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+#due-count {
+  color: var(--accent);
+  font-weight: 600;
+  margin-left: 0.15em;
+}
+
+#theme-toggle {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+#theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+#theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   Screens
+   ========================================================================== */
+
+.screen {
+  display: none;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.screen.active { display: flex; }
+
+/* ==========================================================================
+   Board coloring, shared by the Play and Review boards. A pure-CSS
+   checkerboard (a conic-gradient tile repeated 4x4) rather than a baked
+   SVG, so it re-colors with the theme tokens above instead of needing a
+   second image. Piece art stays cburnett (chessground.cburnett.css).
+   ========================================================================== */
+
+cg-board {
+  background-color: var(--board-a);
+  background-image: conic-gradient(
+    var(--board-b) 90deg, transparent 90deg 180deg,
+    var(--board-b) 180deg 270deg, transparent 270deg
+  );
+  background-size: 25% 25%;
+}
+
+cg-board square.move-dest {
+  background: radial-gradient(rgba(var(--accent-rgb), 0.45) 22%, transparent 0);
+}
+
+cg-board square.oc.move-dest {
+  background: radial-gradient(transparent 0%, transparent 80%, rgba(var(--accent-rgb), 0.4) 80%);
+}
+
+cg-board square.move-dest:hover,
+cg-board square.move-dest.hover {
+  background: rgba(var(--accent-rgb), 0.3);
+}
+
+cg-board square.last-move {
+  background-color: rgba(var(--accent-rgb), 0.22);
+}
+
+cg-board square.selected {
+  background-color: rgba(var(--accent-rgb), 0.5);
+}
+
+cg-board square.check {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(var(--bad-rgb), 0.9) 0%,
+    rgba(var(--bad-rgb), 0.55) 30%,
+    rgba(var(--bad-rgb), 0) 85%
+  );
+}
+
+/* ==========================================================================
+   Play screen
+   ========================================================================== */
+
+#board-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: stretch;
+}
+
+#board,
+#review-board {
+  width: 100%;
   aspect-ratio: 1;
-  background-color: aliceblue;
+}
+
+#eval-bar {
+  width: 12px;
+  border-radius: 3px;
+  background-color: var(--panel);
+  border: 1px solid var(--line);
+  position: relative;
+  overflow: hidden;
+  /* Hidden by default (opacity, not display) so revealing it never shifts
+     the board layout. */
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+#eval-bar.visible { opacity: 1; }
+
+#eval-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background-color: var(--ink);
+  transition: height 150ms ease-out;
+}
+
+#panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+#reset {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+#reset:hover { border-color: var(--muted); }
+
+#status {
+  font-weight: 600;
+  min-height: 1.2em;
+}
+
+#history {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+@media (min-width: 720px) {
+  #screen-play.active {
+    display: grid;
+    grid-template-columns: minmax(0, 34rem) 1fr;
+    gap: 2.5rem;
+    align-items: start;
+  }
+
+  #panel { padding-top: 0.5rem; }
+}
+
+/* ==========================================================================
+   Import screen -- a utility screen, styled quietly rather than boxed:
+   thin dividers instead of bordered cards, generous vertical rhythm.
+   ========================================================================== */
+
+.import-block {
+  border-top: 1px solid var(--line);
+  padding-top: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 40rem;
+}
+
+.import-block:first-child { border-top: none; padding-top: 0; }
+
+.import-block h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+#pgn-input {
+  width: 100%;
+  min-height: 8rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.6rem;
+  resize: vertical;
+}
+
+.form-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+#manual-fen {
+  flex: 1;
+  min-width: 12rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+}
+
+.import-block button,
+.file-btn {
+  background: none;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.import-block button:hover,
+.file-btn:hover { border-color: var(--muted); }
+
+.file-btn {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+}
+
+.file-btn input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-height: 1.1em;
+}
+
+/* ==========================================================================
+   Review screen
+   ========================================================================== */
+
+#review-board-row { display: flex; }
+
+#review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+#review-info {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+#review-feedback {
+  min-height: 1.3em;
+  font-size: 0.95rem;
+}
+
+#review-controls { display: flex; gap: 0.6rem; }
+
+#review-controls button {
+  background: none;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+#review-controls button:hover { border-color: var(--muted); }
+
+@media (min-width: 720px) {
+  #screen-review.active {
+    display: grid;
+    grid-template-columns: minmax(0, 34rem) 1fr;
+    gap: 2.5rem;
+    align-items: start;
+  }
+
+  #review-panel { padding-top: 0.5rem; }
 }
