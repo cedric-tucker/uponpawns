@@ -4,6 +4,10 @@ import type { Api } from '@lichess-org/chessground/api';
 
 export interface BoardView {
     render(state: {fen: string; turn: Color; dests: Dests; interactive: boolean}): void;
+    // `fraction` is White's share of the bar in [0, 1]; `null` hides it.
+    // The board doesn't know what centipawns mean -- that mapping happens
+    // upstream -- it just paints whatever fraction it's handed.
+    renderEval(fraction: number | null): void;
 }
 
 export function createBoard(
@@ -13,6 +17,10 @@ export function createBoard(
     const ground: Api = Chessground(board, {
         movable: {free: false, events: {after: onMove}},
     });
+
+    const evalBar = document.getElementById('eval-bar');
+    const evalFill = document.getElementById('eval-fill');
+
     return {
         // Single path for board state: interactivity is just "does this render
         // carry live dests", not a separate mode toggled elsewhere. Chessground
@@ -28,6 +36,13 @@ export function createBoard(
                     dests: interactive ? dests : new Map(),
                 },
             });
+        },
+        renderEval: (fraction) => {
+            if (!evalBar || !evalFill) return;
+            evalBar.classList.toggle('visible', fraction !== null);
+            if (fraction !== null) {
+                evalFill.style.height = `${fraction * 100}%`;
+            }
         },
     };
 }

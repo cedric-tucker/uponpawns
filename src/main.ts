@@ -13,7 +13,14 @@ import type { Key } from '@lichess-org/chessground/types';
 import './style.css'
 
 import { startEngine } from './engine';
+import type { Score, SearchInfo } from './engine';
 import { createBoard } from './board';
+
+// Evals below this depth swing wildly and just produce jitter.
+const MIN_EVAL_DEPTH = 8;
+// Mate scores clamp to the extremes rather than trying to place them on the
+// same scale as a centipawn count.
+const MATE_FRACTION = 0.97;
 
 const boardElement = document.getElementById('board');
 const resetButton = document.getElementById('reset');
@@ -26,6 +33,8 @@ if (!boardElement || !resetButton || !statusElement || !historyElement) {
 let pos = Chess.default();
 let history: string[] = [];
 let interactive = true;
+let latestEvalFraction: number | null = null;
+let evalFrameScheduled = false;
 
 const engine = await startEngine();
 const view = createBoard(boardElement, onMove);
@@ -39,7 +48,9 @@ function reset() {
   pos = Chess.default();
   history = [];
   interactive = true;
+  latestEvalFraction = null;
   refresh();
+  view.renderEval(null);
 }
 
 function refresh() {
@@ -68,6 +79,31 @@ function renderStatus() {
   }
 }
 
+// Maps a White-positive score onto White's share of the eval bar in [0, 1].
+// A logistic curve rather than a linear one: the difference between +8 and
+// +12 is meaningless while +0.2 vs +0.8 matters a great deal near equality.
+function scoreToFraction(score: Score): number {
+  if (score.type === 'mate') {
+    return score.value > 0 ? MATE_FRACTION : 1 - MATE_FRACTION;
+  }
+  return 1 / (1 + Math.exp(-score.value / 350));
+}
+
+// Showing live eval during the engine's own search is a spoiler -- it tells
+// you what the engine is about to play before it plays it. So this only
+// ever reaches the screen once `interactive` is back on, i.e. once it's the
+// human's turn to think about the position the engine just moved into.
+function onSearchInfo(info: SearchInfo) {
+  if (info.depth < MIN_EVAL_DEPTH) return;
+  latestEvalFraction = scoreToFraction(info.score);
+  if (evalFrameScheduled) return;
+  evalFrameScheduled = true;
+  requestAnimationFrame(() => {
+    evalFrameScheduled = false;
+    if (interactive) view.renderEval(latestEvalFraction);
+  });
+}
+
 // Pawn reaching the back rank needs a promotion role or `pos.play` leaves an
 // illegal pawn sitting on rank 1/8. Auto-queen for now; a picker can replace
 // this later.
@@ -88,8 +124,9 @@ async function onMove(orig: Key, dest: Key) {
 
   interactive = false;
   refresh();
+  view.renderEval(null); // hide -- the engine is now thinking about its own move
   try {
-    const uci = await engine.bestMove(makeFen(pos.toSetup()));
+    const uci = await engine.bestMove(makeFen(pos.toSetup()), onSearchInfo);
     const engineMove = parseUci(uci);
     if (!engineMove) return;
     history.push(makeSanAndPlay(pos, engineMove));
@@ -101,5 +138,6 @@ async function onMove(orig: Key, dest: Key) {
     // this was in flight, and refresh() picks that up for free.
     interactive = true;
     refresh();
+    view.renderEval(latestEvalFraction);
   }
 }
