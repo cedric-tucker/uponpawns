@@ -5,13 +5,29 @@
     <!-- <link rel="icon" type="image/svg+xml" href="/favicon.svg" /> FAVICON change source later -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>uponpawns</title>
+    <script>
+      // Applied before anything else loads, so there's no flash of the
+      // wrong theme on first paint. Kept in sync with src/theme.ts, which
+      // is what the in-app toggle talks to afterward.
+      (function () {
+        var stored = localStorage.getItem('uponpawns:theme');
+        var theme = stored === 'light' || stored === 'dark'
+          ? stored
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="app">
       <nav id="nav">
-        <button class="nav-btn" data-screen="play">Play</button>
-        <button class="nav-btn" data-screen="import">Import</button>
-        <button class="nav-btn" data-screen="review">Review<span id="due-count"></span></button>
+        <div class="wordmark">uponpawns</div>
+        <div class="nav-tabs">
+          <button class="nav-btn" data-screen="play">Play</button>
+          <button class="nav-btn" data-screen="import">Import</button>
+          <button class="nav-btn" data-screen="review">Review<span id="due-count"></span></button>
+        </div>
+        <button id="theme-toggle" type="button" aria-label="Switch color theme"></button>
       </nav>
 
       <section id="screen-play" class="screen">

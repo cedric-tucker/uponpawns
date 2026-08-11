@@ -26,6 +26,8 @@ import {
     scheduleNext,
 } from './review';
 import type { Card, Grade } from './review';
+import { currentTheme, toggleTheme } from './theme';
+import type { Theme } from './theme';
 
 const MIN_EVAL_DEPTH = 8;
 const MATE_FRACTION = 0.97;
@@ -50,6 +52,7 @@ export async function startApp(): Promise<void> {
     const dom = {
         navButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('.nav-btn')),
         dueCount: el('due-count'),
+        themeToggle: el<HTMLButtonElement>('theme-toggle'),
         screens: {
             play: el('screen-play'),
             import: el('screen-import'),
@@ -81,6 +84,17 @@ export async function startApp(): Promise<void> {
 
     const engine = await startEngine();
     const store = await openStore();
+
+    // ---- Theme toggle ----------------------------------------------------
+    // Label reads as what clicking it *does*, not the mode it's currently
+    // in -- "Dark" while light, "Light" while dark.
+    function themeLabel(t: Theme): string {
+        return t === 'dark' ? 'Light' : 'Dark';
+    }
+    dom.themeToggle.textContent = themeLabel(currentTheme());
+    dom.themeToggle.addEventListener('click', () => {
+        dom.themeToggle.textContent = themeLabel(toggleTheme());
+    });
 
     // ---- Screen switching ----------------------------------------------
     function showScreen(name: ScreenName) {
