@@ -32,10 +32,16 @@ import type { Theme } from './theme';
 import { initBoardSize, makeResizable } from './resize';
 import { createMoveList } from './movelist';
 import type { MoveListView, MoveTone } from './movelist';
+import { glitchText } from './glitchtext';
+import { mountPawnParticles } from './pawnparticles';
 
 const MIN_EVAL_DEPTH = 8;
 const MATE_FRACTION = 0.97;
 const REVIEW_TIME_MS = 1000; // "Review: ~1s, and ideally never hit at all."
+// Home's dot field is a fixed dark "tech" room independent of light/dark --
+// same reasoning as the board's own frozen colors.
+const HOME_DOT_COLOR = '#59b3a7';
+const HOME_HEADLINE_FONT = '-apple-system, "Segoe UI", system-ui, sans-serif';
 
 // FSRS's own vocabulary (Again/Hard/Good/Easy) describes recall difficulty,
 // not move quality -- "Good" in particular reads as reassuring when a
@@ -44,7 +50,7 @@ const REVIEW_TIME_MS = 1000; // "Review: ~1s, and ideally never hit at all."
 const GRADE_LABELS: Record<Grade, string> = { 1: 'Blunder', 2: 'Mistake', 3: 'Inaccuracy', 4: 'Best' };
 const GRADE_TONES: Record<Grade, MoveTone> = { 1: 'bad', 2: 'bad', 3: 'warn', 4: 'good' };
 
-type ScreenName = 'play' | 'import' | 'review';
+type ScreenName = 'home' | 'play' | 'import' | 'review';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
     const found = document.getElementById(id);
@@ -71,10 +77,14 @@ export async function startApp(): Promise<void> {
         dueCount: el('due-count'),
         themeToggle: el<HTMLButtonElement>('theme-toggle'),
         screens: {
+            home: el('screen-home'),
             play: el('screen-play'),
             import: el('screen-import'),
             review: el('screen-review'),
         } satisfies Record<ScreenName, HTMLElement>,
+
+        homeHeadline: el('home-headline'),
+        homeCanvas: el<HTMLCanvasElement>('home-particles'),
 
         boardWrap: el('board-wrap'),
         boardResize: el('board-resize'),
@@ -142,11 +152,23 @@ export async function startApp(): Promise<void> {
         for (const btn of dom.navButtons) {
             btn.classList.toggle('active', btn.dataset.screen === name);
         }
+        // The particle field's animation loop is pure waste behind a hidden
+        // screen -- only run it while Home is actually showing.
+        if (name === 'home') particleField.resume();
+        else particleField.pause();
         if (name === 'review') void loadNextCard();
     }
     for (const btn of dom.navButtons) {
         btn.addEventListener('click', () => showScreen(btn.dataset.screen as ScreenName));
     }
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('.home-choice')) {
+        btn.addEventListener('click', () => showScreen(btn.dataset.screen as ScreenName));
+    }
+
+    // ---- Home screen: nav-tab-free launch point, plus the flourish that
+    // doesn't belong on the working screens (particle field, glitch text).
+    const particleField = mountPawnParticles(dom.homeCanvas, HOME_DOT_COLOR);
+    glitchText(dom.homeHeadline, HOME_HEADLINE_FONT);
 
     // Up/Down jump to the start/end of the game; Left/Right step one ply.
     // Ignored while typing in a text field, and scoped to whichever screen
@@ -588,5 +610,5 @@ export async function startApp(): Promise<void> {
         void refreshDueCount();
     }
 
-    showScreen('play');
+    showScreen('home');
 }

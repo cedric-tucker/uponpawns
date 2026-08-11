@@ -23,12 +23,36 @@
       <nav id="nav">
         <div class="wordmark">upon<em>pawns</em></div>
         <div class="nav-tabs">
+          <button class="nav-btn" data-screen="home">Home</button>
           <button class="nav-btn" data-screen="play">Play</button>
           <button class="nav-btn" data-screen="import">Import</button>
           <button class="nav-btn" data-screen="review">Review<span id="due-count"></span></button>
         </div>
         <button id="theme-toggle" type="button" aria-label="Switch color theme"></button>
       </nav>
+
+      <section id="screen-home" class="screen home-screen">
+        <div class="home-halftone" aria-hidden="true"></div>
+        <div class="home-content">
+          <h1 id="home-headline" class="home-headline">uponpawns</h1>
+          <p class="home-tagline">Spaced repetition for the moments you actually blundered.</p>
+          <canvas id="home-particles" class="home-particles"></canvas>
+          <div class="home-choices">
+            <button class="home-choice" data-screen="play" type="button">
+              <span class="home-choice-label">Play</span>
+              <span class="home-choice-desc">Free play against the engine</span>
+            </button>
+            <button class="home-choice" data-screen="import" type="button">
+              <span class="home-choice-label">Import</span>
+              <span class="home-choice-desc">Find blunders in a game</span>
+            </button>
+            <button class="home-choice" data-screen="review" type="button">
+              <span class="home-choice-label">Review</span>
+              <span class="home-choice-desc">Drill what's due</span>
+            </button>
+          </div>
+        </div>
+      </section>
 
       <section id="screen-play" class="screen">
         <div id="board-row">

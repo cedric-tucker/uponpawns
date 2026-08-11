@@ -180,6 +180,110 @@ button, input, textarea, select {
 .screen.active { display: flex; }
 
 /* ==========================================================================
+   Home screen -- a fixed dark "tech" room independent of the light/dark
+   toggle (same reasoning as the board's own frozen colors: this is a
+   deliberate, single visual world, not chrome that should adapt). Plain
+   literal colors throughout this block rather than the --token system on
+   purpose. Play/Import/Review stay exactly as they are -- this is a launch
+   point, not a redesign of the working screens.
+   ========================================================================== */
+
+.home-screen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: #0b0c0e;
+  color: #eef0ee;
+  border-radius: 10px;
+  padding: 3.5rem 2rem 3rem;
+  min-height: 30rem;
+  align-items: stretch;
+}
+
+.home-halftone {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.09) 1px, transparent 1.6px);
+  background-size: 15px 15px;
+  pointer-events: none;
+}
+
+.home-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.home-headline {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.4rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.home-tagline {
+  margin: 0 0 1.5rem;
+  color: #9aa0a6;
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.home-particles {
+  display: block;
+  width: min(60vw, 18rem);
+  height: min(60vw, 18rem);
+  margin-bottom: 2rem;
+  touch-action: none;
+}
+
+.home-choices {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.home-choice {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 1rem 1.4rem;
+  min-width: 11rem;
+  color: #eef0ee;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.home-choice:hover,
+.home-choice:focus-visible {
+  border-color: #59b3a7;
+  background: rgba(89, 179, 167, 0.1);
+}
+
+.home-choice:focus-visible {
+  outline: 2px solid #59b3a7;
+  outline-offset: 2px;
+}
+
+.home-choice-label {
+  display: block;
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin-bottom: 0.25rem;
+}
+
+.home-choice-desc {
+  display: block;
+  font-size: 0.8rem;
+  color: #9aa0a6;
+}
+
+/* ==========================================================================
    Board coloring, shared by the Play and Review boards, and deliberately
    independent of the light/dark tokens above -- see the note in the
    token block. A pure-CSS checkerboard (a repeated conic-gradient tile)
