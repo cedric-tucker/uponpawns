@@ -215,6 +215,11 @@ button, input, textarea, select {
   flex-direction: column;
   align-items: center;
   gap: 0.25rem;
+  /* A normal div intercepts pointer events over its whole box even where
+     it's visually empty -- without this, the canvas underneath would
+     never see the pointer anywhere near this column, since the pawn
+     itself sits inside it. Only the choice buttons need clicks. */
+  pointer-events: none;
 }
 
 .home-headline {
@@ -232,12 +237,23 @@ button, input, textarea, select {
   text-align: center;
 }
 
+/* Full-bleed over the whole screen (not just its own box) so the pawn has
+   the entire home screen to bounce around in, not a small slice of it.
+   The anchor div below is what gives it a resting position to spring back
+   toward and a size to draw itself at -- it stays invisible, purely a
+   layout/measurement reference. */
 .home-particles {
-  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.home-particles-anchor {
   width: min(60vw, 18rem);
   height: min(60vw, 18rem);
   margin-bottom: 2rem;
-  touch-action: none;
 }
 
 .home-choices {
@@ -245,6 +261,7 @@ button, input, textarea, select {
   gap: 1rem;
   flex-wrap: wrap;
   justify-content: center;
+  pointer-events: auto; /* re-enable clicks; .home-content disabled them above */
 }
 
 .home-choice {

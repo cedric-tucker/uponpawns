@@ -1,14 +1,16 @@
 // A field of small particles arranged as a surface of revolution shaped
 // like a pawn -- the same technique behind the classic "spinning donut"
 // demo: a 2D profile curve (radius vs. height) revolved around the
-// vertical axis, then rotated and projected each frame.
+// vertical axis, then rotated on two axes and projected each frame.
 //
-// The pawn is one rigid, cohesive shape: every particle is always drawn
-// exactly at its computed position, with no physics of its own. What has
-// physics is a single shared (center, velocity) for the whole shape --
-// the pointer knocks *that*, and it bounces off the canvas edges like a
-// pong ball, losing a little energy each bounce, until it settles back
-// toward the middle.
+// The pawn is one rigid, cohesive shape (particles carry no state of
+// their own -- every frame each is drawn exactly at its computed
+// position). Two independent things have physics: a shared (center,
+// velocity) for the whole shape's position, which the pointer knocks and
+// which bounces off the *canvas's* edges (the whole home screen, not the
+// shape's own small box) like a pong ball before easing back to its
+// resting spot; and a spin velocity around the vertical axis, which
+// dragging the pointer left/right speeds up, slows down, or reverses.
 interface Seed {
     t: number; // normalised height, fixed for this particle's lifetime
     phi: number; // angular seat around the vertical axis, fixed
@@ -17,14 +19,23 @@ interface Seed {
 const PARTICLE_COUNT = 900; // backface-culled, so only roughly half are ever visible at once
 const DOT_RADIUS_MIN = 0.6;
 const DOT_RADIUS_MAX = 1.3;
-const ROTATION_SPEED = 0.006; // radians/frame at ~60fps -- one turn every ~17s
 
-const HIT_RADIUS_FACTOR = 0.46; // x min(width,height) -- how close counts as "touching" the pawn
+// Rotation: two axes so it actually tumbles instead of just spinning flat
+// like a lathe. Y is the "spin" (interactive); X is a slow constant
+// "tumble" that's always running, which is what makes it read as a real
+// 3D object rather than a disc.
+const SPIN_BASE_SPEED = 0.006; // rad/frame the Y spin eases back to when not being dragged
+const TUMBLE_SPEED = 0.0016; // rad/frame, constant, around X
+const SPIN_SENSITIVITY = 0.0026; // how much horizontal drag speed adds to the Y spin velocity
+const SPIN_DECAY = 0.02; // how quickly the Y spin eases back toward baseline after a drag
+const MAX_SPIN_SPEED = 0.09;
+
+const HIT_RADIUS_FACTOR = 0.62; // x pawnScale -- how close counts as "touching" the pawn
 const KICK_STRENGTH = 2.4;
-const MAX_CENTER_SPEED = 9;
+const MAX_CENTER_SPEED = 11;
 const FRICTION = 0.985; // light drag -- the shape should travel and bounce, not fizzle in place
 const WALL_RESTITUTION = 0.82; // energy kept per bounce off the container edge
-const CALM_SPEED = 0.6; // below this, the shape eases back toward centre
+const CALM_SPEED = 0.6; // below this, the shape eases back toward its resting spot
 const REST_SPRING = 0.01;
 
 export interface ParticleField {
@@ -89,30 +100,47 @@ function seedParticles(count: number): Seed[] {
     return seeds;
 }
 
-export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string): ParticleField {
+export function mountPawnParticles(canvas: HTMLCanvasElement, anchor: HTMLElement, dotColor: string): ParticleField {
     const ctx = canvas.getContext('2d');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    let width = 0;
+    let width = 0; // canvas (whole home screen) bounds -- the bounce arena
     let height = 0;
+    let pawnScale = 0; // the shape's own size, from the anchor element, independent of the arena size
     let seeds: Seed[] = [];
-    let rotation = 0;
-    // The whole shape's offset from the canvas centre, and its velocity --
-    // the only thing with physics. Every particle's position is purely a
-    // function of (rotation, center); there's no per-particle state.
+    let seeded = false;
+
+    let spinY = 0;
+    let spinVelY = SPIN_BASE_SPEED;
+    let tumbleX = 0;
+
+    // The whole shape's offset from the canvas's top-left, and its
+    // velocity -- the only thing with position physics. Every particle's
+    // position is purely a function of (spinY, tumbleX, center); there's
+    // no per-particle state.
     const center = { x: 0, y: 0 };
     const centerV = { x: 0, y: 0 };
+    const restOffset = { x: 0, y: 0 }; // where the anchor currently sits, in canvas-relative coords
+
     let pointer: { x: number; y: number } | null = null;
     let raf = 0;
 
     function project(t: number, phi: number): { x: number; y: number; z: number } {
-        const scale = Math.min(width, height);
-        const r = pawnRadius(t) * scale;
-        const theta = phi + rotation;
-        const x3 = r * Math.cos(theta);
-        const z3 = r * Math.sin(theta);
-        const y3 = (0.5 - t) * scale * 0.78; // taller than wide
-        return { x: width / 2 + center.x + x3, y: height / 2 + center.y + y3, z: z3 };
+        const r = pawnRadius(t) * pawnScale;
+        const x0 = r * Math.cos(phi);
+        const z0 = r * Math.sin(phi);
+        const y0 = (0.5 - t) * pawnScale * 0.78; // taller than wide
+
+        // Spin around the vertical (Y) axis.
+        const x1 = x0 * Math.cos(spinY) - z0 * Math.sin(spinY);
+        const z1 = x0 * Math.sin(spinY) + z0 * Math.cos(spinY);
+
+        // Tumble around the horizontal (X) axis -- what keeps this from
+        // looking like a flat disc spinning in place.
+        const y2 = y0 * Math.cos(tumbleX) - z1 * Math.sin(tumbleX);
+        const z2 = y0 * Math.sin(tumbleX) + z1 * Math.cos(tumbleX);
+
+        return { x: center.x + x1, y: center.y + y2, z: z2 };
     }
 
     function ensureSized() {
@@ -128,12 +156,35 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
             canvas.height = height * dpr;
             ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
         }
-        if (seeds.length === 0) seeds = seedParticles(PARTICLE_COUNT);
+
+        const anchorRect = anchor.getBoundingClientRect();
+        if (anchorRect.width > 0) {
+            pawnScale = anchorRect.width;
+            restOffset.x = anchorRect.left + anchorRect.width / 2 - rect.left;
+            restOffset.y = anchorRect.top + anchorRect.height / 2 - rect.top;
+        }
+
+        if (!seeded && pawnScale > 0) {
+            seeds = seedParticles(PARTICLE_COUNT);
+            center.x = restOffset.x;
+            center.y = restOffset.y;
+            seeded = true;
+        }
     }
 
     function onPointerMove(e: PointerEvent) {
         const rect = canvas.getBoundingClientRect();
-        pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        if (pointer && pawnScale > 0) {
+            const dist = Math.hypot(x - center.x, y - center.y);
+            if (dist < pawnScale * HIT_RADIUS_FACTOR) {
+                spinVelY += (x - pointer.x) * SPIN_SENSITIVITY;
+                spinVelY = Math.max(-MAX_SPIN_SPEED, Math.min(MAX_SPIN_SPEED, spinVelY));
+            }
+        }
+        pointer = { x, y };
     }
     function onPointerLeave() {
         pointer = null;
@@ -142,7 +193,7 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
     canvas.addEventListener('pointerleave', onPointerLeave);
 
     function depthStyle(z: number): { alpha: number; radius: number } {
-        const norm = Math.max(-1, Math.min(1, z / (Math.min(width, height) * 0.32)));
+        const norm = Math.max(-1, Math.min(1, z / (pawnScale * 0.32)));
         const t = (norm + 1) / 2;
         return { alpha: 0.35 + t * 0.65, radius: DOT_RADIUS_MIN + t * (DOT_RADIUS_MAX - DOT_RADIUS_MIN) };
     }
@@ -162,7 +213,7 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
     // negative allowance rather than a hard z >= 0 keeps a sliver of the
     // rim visible right at the silhouette edge instead of a clean cut.
     function isFacing(z: number): boolean {
-        return z >= -Math.min(width, height) * 0.02;
+        return z >= -pawnScale * 0.02;
     }
 
     function drawShape() {
@@ -175,15 +226,13 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
         ctx.globalAlpha = 1;
     }
 
-    // Knocks and settles the *whole shape* -- not individual particles.
+    // Knocks and settles the *whole shape*, not individual particles.
     function stepCenter() {
         if (pointer) {
-            const absX = width / 2 + center.x;
-            const absY = height / 2 + center.y;
-            const dx = absX - pointer.x;
-            const dy = absY - pointer.y;
+            const dx = center.x - pointer.x;
+            const dy = center.y - pointer.y;
             const dist = Math.hypot(dx, dy) || 1;
-            const hitRadius = Math.min(width, height) * HIT_RADIUS_FACTOR;
+            const hitRadius = pawnScale * HIT_RADIUS_FACTOR;
             if (dist < hitRadius) {
                 const force = (1 - dist / hitRadius) * KICK_STRENGTH;
                 centerV.x += (dx / dist) * force;
@@ -191,12 +240,10 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
             }
         }
 
-        // Once it's basically stopped bouncing, ease it back toward centre
-        // rather than leaving it resting wherever it happened to stop.
         const speed = Math.hypot(centerV.x, centerV.y);
         if (speed < CALM_SPEED) {
-            centerV.x += -center.x * REST_SPRING;
-            centerV.y += -center.y * REST_SPRING;
+            centerV.x += (restOffset.x - center.x) * REST_SPRING;
+            centerV.y += (restOffset.y - center.y) * REST_SPRING;
         }
 
         centerV.x *= FRICTION;
@@ -210,33 +257,34 @@ export function mountPawnParticles(canvas: HTMLCanvasElement, dotColor: string):
         center.x += centerV.x;
         center.y += centerV.y;
 
-        // Bounce off the container edges once the shape's own extent (not
-        // just its centre point) reaches the wall.
-        const scale = Math.min(width, height);
-        const halfW = PROFILE_MAX_R * scale;
-        const halfH = scale * PAWN_HALF_HEIGHT_FACTOR;
-        const minX = halfW - width / 2;
-        const maxX = width / 2 - halfW;
-        const minY = halfH - height / 2;
-        const maxY = height / 2 - halfH;
-        if (center.x < minX) {
-            center.x = minX;
+        // Bounce off the *canvas's* edges (the whole home screen) once the
+        // shape's own extent reaches the wall, not just its centre point.
+        const halfW = PROFILE_MAX_R * pawnScale;
+        const halfH = pawnScale * PAWN_HALF_HEIGHT_FACTOR;
+        if (center.x < halfW) {
+            center.x = halfW;
             centerV.x = -centerV.x * WALL_RESTITUTION;
-        } else if (center.x > maxX) {
-            center.x = maxX;
+        } else if (center.x > width - halfW) {
+            center.x = width - halfW;
             centerV.x = -centerV.x * WALL_RESTITUTION;
         }
-        if (center.y < minY) {
-            center.y = minY;
+        if (center.y < halfH) {
+            center.y = halfH;
             centerV.y = -centerV.y * WALL_RESTITUTION;
-        } else if (center.y > maxY) {
-            center.y = maxY;
+        } else if (center.y > height - halfH) {
+            center.y = height - halfH;
             centerV.y = -centerV.y * WALL_RESTITUTION;
         }
     }
 
+    function stepRotation() {
+        spinVelY += (SPIN_BASE_SPEED - spinVelY) * SPIN_DECAY;
+        spinY += spinVelY;
+        tumbleX += TUMBLE_SPEED;
+    }
+
     function step() {
-        rotation += ROTATION_SPEED;
+        stepRotation();
         stepCenter();
         drawShape();
         raf = requestAnimationFrame(step);

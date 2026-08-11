@@ -85,6 +85,7 @@ export async function startApp(): Promise<void> {
 
         homeHeadline: el('home-headline'),
         homeCanvas: el<HTMLCanvasElement>('home-particles'),
+        homeParticlesAnchor: el('home-particles-anchor'),
 
         boardWrap: el('board-wrap'),
         boardResize: el('board-resize'),
@@ -167,7 +168,7 @@ export async function startApp(): Promise<void> {
 
     // ---- Home screen: nav-tab-free launch point, plus the flourish that
     // doesn't belong on the working screens (particle field, glitch text).
-    const particleField = mountPawnParticles(dom.homeCanvas, HOME_DOT_COLOR);
+    const particleField = mountPawnParticles(dom.homeCanvas, dom.homeParticlesAnchor, HOME_DOT_COLOR);
     glitchText(dom.homeHeadline, HOME_HEADLINE_FONT);
 
     // Up/Down jump to the start/end of the game; Left/Right step one ply.
