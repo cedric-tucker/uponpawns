@@ -581,13 +581,32 @@ export async function startApp(): Promise<void> {
         if (reviewGame.turn() !== card.sideToMove) {
             await new Promise((r) => setTimeout(r, 350)); // let the reveal register as a move, not a jump cut
             const uci = card.correctLine[stepIndex];
-            if (uci) {
+            // `correctLine` is a PV snapshotted once at import time, assuming
+            // both sides keep playing the engine's top choice. The instant the
+            // reviewer plays anything else for their own side -- even a fine,
+            // non-blunder move -- the live position diverges from the one that
+            // line was computed for, and the next scripted reply can be flat
+            // illegal here (blocked path, occupied square, ...). Since play()
+            // never validates, check first: an illegal/missing next move means
+            // the book line has run out, not that there's nothing to play.
+            if (uci && reviewGame.isLegalUci(uci)) {
                 reviewGame.playUci(uci);
                 reviewViewPly = reviewGame.plyCount();
                 stepIndex++;
-            }
-            refreshReviewBoard();
-            if (stepIndex >= card.correctLine.length || reviewGame.isEnd()) {
+                refreshReviewBoard();
+                if (stepIndex >= card.correctLine.length || reviewGame.isEnd()) {
+                    await finishAttempt();
+                    return;
+                }
+            } else if (uci) {
+                // uci was present but no longer legal -- the reviewer's own
+                // moves took the game somewhere the precomputed line never
+                // covered. Say so, rather than silently cutting the attempt
+                // short with no explanation.
+                dom.reviewFeedback.textContent += ' (line diverged from the analysed continuation — ending review here)';
+                await finishAttempt();
+                return;
+            } else {
                 await finishAttempt();
                 return;
             }

@@ -23,6 +23,13 @@ export interface Game {
     /** Pawn reaching the back rank needs a promotion role or chessops leaves an
      *  illegal pawn sitting on rank 1/8 -- this fills it in (auto-queen). */
     isPromotion(from: number, to: number): boolean;
+    /** Whether `uci` is a legal move in the *current* position. chessops'
+     *  play() trusts its caller and applies whatever it's given, so anything
+     *  that plays a move sourced from outside the board's own dests() (a
+     *  precomputed line, an engine reply computed for a since-diverged
+     *  position, ...) needs to check this first or risk forcing an illegal
+     *  move onto the board. */
+    isLegalUci(uci: string): boolean;
     playSquares(from: number, to: number): string | undefined;
     playUci(uci: string): string | undefined;
     reset(): void;
@@ -70,6 +77,10 @@ export function createGame(startFen?: string): Game {
         fenAt: (ply) => fens[ply] ?? fens[fens.length - 1],
         plyCount: () => moves.length,
         isPromotion,
+        isLegalUci: (uci) => {
+            const move = parseUci(uci);
+            return move !== undefined && pos.isLegal(move);
+        },
         playSquares: (from, to) => {
             const move: NormalMove = { from, to, promotion: isPromotion(from, to) ? 'queen' : undefined };
             return play(move);
